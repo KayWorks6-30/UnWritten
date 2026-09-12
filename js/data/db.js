@@ -1,6 +1,6 @@
 import { SCHEMA_VERSION } from '../domain/schema.js';
 
-export const DATA_STORES = ['entities','relations','media','settings','clues','reveals','knowledge','mapVersions','mapMarkers'];
+export const DATA_STORES = ['entities','relations','media','settings','clues','reveals','knowledge','mapVersions','mapMarkers','workspace'];
 let snapshotPromise = null;
 let snapshotCache = null;
 
@@ -8,7 +8,10 @@ async function api(path, options={}) {
   const response = await fetch(path, { ...options, headers:{ 'accept':'application/json', ...(options.headers||{}) } });
   const type=response.headers.get('content-type')||'';
   const payload=type.includes('application/json') ? await response.json() : null;
-  if(!response.ok) throw new Error(payload?.error || `Request failed (${response.status}).`);
+  if(!response.ok){
+    const err=new Error(payload?.error || `Request failed (${response.status}).`);
+    err.status=response.status; err.details=payload?.details; throw err;
+  }
   return payload;
 }
 
@@ -26,7 +29,7 @@ async function loadSnapshot(){
 export async function getAll(name){ if(!DATA_STORES.includes(name)) throw new Error(`Unknown store ${name}.`); return structuredClone((await loadSnapshot())[name]); }
 export async function getOne(name,key){ const rows=await getAll(name); return rows.find(row=>(name==='settings'?row.key:row.id)===key); }
 
-export async function putOne(name,value){
+export async function putOne(name,value,{baseUpdatedAt=null}={}){
   if(!DATA_STORES.includes(name)) throw new Error(`Unknown store ${name}.`);
   if(name==='media'){
     if(!(value.blob instanceof Blob)) throw new Error('Media uploads require a local file/blob.');
@@ -35,13 +38,17 @@ export async function putOne(name,value){
     await api(`/api/media/${encodeURIComponent(value.id)}`,{method:'PUT',body:form});
   } else {
     const key=name==='settings'?value.key:value.id;
-    await api(`/api/store/${encodeURIComponent(name)}/${encodeURIComponent(key)}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(value)});
+    const headers={'content-type':'application/json'};
+    if(baseUpdatedAt) headers['x-base-updated-at']=baseUpdatedAt;
+    await api(`/api/store/${encodeURIComponent(name)}/${encodeURIComponent(key)}`,{method:'PUT',headers,body:JSON.stringify(value)});
   }
   invalidate(); return value;
 }
 
 export async function deleteOne(name,key){
   if(!DATA_STORES.includes(name)) throw new Error(`Unknown store ${name}.`);
+  if(name==='entities') return deleteEntityCascade(key);
+  if(name==='mapVersions') return deleteMapVersionCascade(key);
   const path=name==='media'?`/api/media/${encodeURIComponent(key)}`:`/api/store/${encodeURIComponent(name)}/${encodeURIComponent(key)}`;
   await api(path,{method:'DELETE'}); invalidate();
 }

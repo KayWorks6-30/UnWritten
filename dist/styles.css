@@ -244,3 +244,86 @@ dialog::backdrop { background: rgba(5,6,8,.72); backdrop-filter: blur(2px); }
 
 /* V1.1 keyboard-accessible relation/timeline rows */
 .related-row{gap:10px}.related-open{appearance:none;border:0;background:transparent;color:inherit;text-align:left;display:flex;flex:1;min-width:0;flex-direction:column;gap:3px;padding:0;cursor:pointer}.related-open:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:8px}.timeline-summary{display:block;margin-top:7px;text-align:left}
+
+/* V3 workspaces, focus mode, and hardened map/editor layout */
+.editor-dialog, .small-dialog { overflow: hidden; }
+.editor-dialog form, .small-dialog form { min-height: 0; overflow: hidden; }
+.dialog-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+.dialog-header, .dialog-footer { flex: 0 0 auto; }
+
+.map-toolbar { grid-template-columns: minmax(190px,1.5fr) minmax(120px,.8fr) minmax(100px,.6fr) auto auto; }
+.map-help-row { display: block; width: 100%; margin: -2px 0 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.map-marker-options, .map-filter-row { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap: 9px; align-items: end; margin-bottom: 12px; }
+.map-filter-row { grid-template-columns: minmax(180px,2fr) minmax(160px,1fr) minmax(160px,1fr) auto; }
+.map-layer-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 9px 11px; margin-bottom: 10px; border: 1px solid var(--border); border-radius: 11px; background: var(--bg-soft); }
+.map-layer-controls label { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; font-weight: 500; }
+.map-canvas { min-width: 0; transform-origin: top left; isolation: isolate; }
+.map-base-image { position: relative; z-index: 0; display: block; width: 100%; height: auto; user-select: none; pointer-events: none; }
+.map-layer-image { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; z-index: 1; pointer-events: none; }
+.map-route-overlay { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; z-index: 2; pointer-events: none; }
+.map-route-line { fill: none; stroke: var(--accent); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 4 2; opacity: .9; }
+.map-marker { z-index: 4; }
+.map-marker .marker-symbol { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); background: var(--accent-strong); border: 2px solid white; box-shadow: 0 2px 8px #0009; font-size: 12px; }
+.map-marker .marker-symbol::first-letter { transform: rotate(45deg); }
+.marker-custom-image { width: 30px; height: 30px; object-fit: cover; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 8px #0009; }
+.map-marker-cluster { position: absolute; z-index: 5; transform: translate(-50%,-50%); width: 34px; height: 34px; border-radius: 50%; border: 2px solid white; background: var(--accent-strong); color: white; font-weight: 800; box-shadow: 0 3px 12px #000b; cursor: zoom-in; }
+.filtered-out { display: none !important; }
+
+.continuity-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(120px,1fr)); gap: 8px; }
+.continuity-grid > div { display: grid; gap: 4px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-soft); }
+.warning-error { border-color: #754044; }
+.warning-warning { border-color: #6b5b36; }
+.story-compass textarea { min-height: 86px; }
+.plot-grid-scroll, .interaction-scroll { overflow: auto; border: 1px solid var(--border); border-radius: 12px; }
+.plot-grid { display: grid; grid-template-columns: minmax(180px,1.25fr) repeat(var(--plot-cols),minmax(180px,1fr)); min-width: max-content; background: var(--border); gap: 1px; }
+.plot-grid-corner, .plot-grid-head, .plot-grid-scene, .plot-cell { background: var(--surface); padding: 10px; min-height: 58px; }
+.plot-grid-corner, .plot-grid-head { position: sticky; top: 0; z-index: 3; font-weight: 750; background: #1b1e27; }
+.plot-grid-scene { position: sticky; left: 0; z-index: 2; min-width: 180px; }
+.plot-cell { display: grid; gap: 7px; align-content: start; }
+.plot-cell.drag-over { outline: 2px solid var(--accent); outline-offset: -3px; }
+.plot-beat { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; border: 1px solid var(--border); background: var(--bg-soft); border-radius: 9px; padding: 8px; cursor: grab; }
+.plot-add, .tiny-x { border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.plot-add { width: 100%; border: 1px dashed var(--border); border-radius: 8px; padding: 5px; }
+.plot-add:hover, .tiny-x:hover { color: var(--text); border-color: var(--accent); }
+.coverage-list { display: grid; gap: 9px; }
+.coverage-row { display: grid; grid-template-columns: minmax(120px,200px) 1fr auto; gap: 10px; align-items: center; }
+.reorder-list { display: grid; gap: 7px; }
+.reorder-item { display: grid; grid-template-columns: auto 1fr auto; gap: 9px; align-items: center; padding: 9px 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-soft); cursor: grab; }
+.parallel-timelines { display: grid; grid-template-columns: repeat(3,minmax(220px,1fr)); gap: 10px; overflow-x: auto; }
+.parallel-lane { min-width: 220px; padding: 10px; border: 1px solid var(--border); border-radius: 11px; background: var(--bg-soft); }
+.tree-node { padding: 8px 10px; margin: 5px 0; border-left: 2px solid var(--border); }
+.checkbox-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(140px,1fr)); gap: 8px; }
+.checkbox-grid label { display: flex; flex-direction: row; align-items: center; gap: 6px; font-weight: 500; }
+.manuscript-textarea { min-height: 430px; resize: vertical; line-height: 1.65; font-family: ui-serif, Georgia, serif; font-size: 1rem; }
+.whiteboard { position: relative; min-height: 460px; overflow: auto; border: 1px solid var(--border); border-radius: 12px; background-image: radial-gradient(#ffffff18 1px,transparent 1px); background-size: 20px 20px; }
+.whiteboard-lines { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.whiteboard-node { position: absolute; width: 170px; min-height: 80px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: #20232d; box-shadow: var(--shadow); cursor: move; }
+.generator-output { min-height: 54px; display: grid; place-items: center; border: 1px dashed var(--border); border-radius: 10px; }
+.reader-site { max-width: 850px; margin: 0 auto; }
+.reader-article { padding: 20px 0; border-top: 1px solid var(--border); }
+.reader-article:first-of-type { border-top: 0; }
+.prompt-list { margin: 8px 0 0; padding-left: 20px; color: var(--muted); }
+.revision summary { cursor: pointer; font-weight: 700; }
+.matrix { border-collapse: collapse; min-width: max-content; width: 100%; }
+.matrix th, .matrix td { border: 1px solid var(--border); padding: 7px; text-align: center; }
+.matrix th { background: #1b1e27; position: sticky; top: 0; }
+
+body.focus-mode .sidebar, body.focus-mode .topbar { display: none; }
+body.focus-mode .app-shell { grid-template-columns: 1fr; }
+body.focus-mode .main-shell { min-width: 0; }
+body.focus-mode .main-content { max-width: 980px; width: 100%; margin: 0 auto; padding-top: 28px; }
+body[data-role="reviewer"] .owner-only { display: none !important; }
+
+@media (max-width: 1180px) {
+  .map-toolbar { grid-template-columns: repeat(2,minmax(180px,1fr)); }
+  .map-filter-row { grid-template-columns: 1fr 1fr; }
+  .parallel-timelines { grid-template-columns: repeat(3,minmax(250px,1fr)); }
+}
+@media (max-width: 760px) {
+  .map-toolbar, .map-marker-options, .map-filter-row { grid-template-columns: 1fr; }
+  .plot-grid { grid-template-columns: minmax(150px,1fr) repeat(var(--plot-cols),minmax(160px,1fr)); }
+  .coverage-row { grid-template-columns: 1fr; }
+  .manuscript-textarea { min-height: 55dvh; }
+}
+.dashboard-widget-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(300px,1fr)); gap: 16px; align-items: start; }
+.timeline-filters { grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); }

@@ -1,0 +1,8 @@
+# Local Wrangler development only. Copy to .dev.vars; do not commit .dev.vars.
+DEV_AUTH_BYPASS=true
+DEV_USER_EMAIL=owner@local.test
+
+# Production does not use the bypass. Production requires:
+# TEAM_DOMAIN=https://<your-team>.cloudflareaccess.com
+# POLICY_AUD=<application-audience-tag>
+# OWNER_EMAILS=<owner-email>[,<second-owner-email>]

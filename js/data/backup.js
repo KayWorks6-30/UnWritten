@@ -10,9 +10,10 @@ async function mediaToPortable(item){ const blob=await mediaBlob(item); const {u
 async function portableToMedia(item){ if(!item.dataUrl) return item; const response=await fetch(item.dataUrl); if(!response.ok) throw new Error(`Could not decode media ${item.id}.`); const blob=await response.blob(); const {dataUrl,...rest}=item; return {...rest,blob}; }
 
 export async function buildBackup({includeMedia=true, portableMedia=true}={}) {
-  const [entities,relations,mediaRaw,settings,clues,reveals,knowledge,mapVersions,mapMarkers]=await Promise.all(DATA_STORES.map(getAll));
-  const media = includeMedia ? (portableMedia ? await Promise.all(mediaRaw.map(mediaToPortable)) : mediaRaw) : [];
-  return { format:'kayworks-world-bible-backup', appVersion:APP_VERSION, schemaVersion:SCHEMA_VERSION, exportedAt:new Date().toISOString(), entities,relations,settings,media,clues,reveals,knowledge,mapVersions,mapMarkers };
+  const values=await Promise.all(DATA_STORES.map(getAll));
+  const stores=Object.fromEntries(DATA_STORES.map((name,index)=>[name,values[index]]));
+  stores.media = includeMedia ? (portableMedia ? await Promise.all(stores.media.map(mediaToPortable)) : stores.media) : [];
+  return { format:'kayworks-world-bible-backup', appVersion:APP_VERSION, schemaVersion:SCHEMA_VERSION, exportedAt:new Date().toISOString(), ...stores };
 }
 
 export function downloadBlob(blob,filename){ const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),0); }

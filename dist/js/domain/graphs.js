@@ -27,8 +27,9 @@ export function familyLevels(rootId,relations,maxDepth=3){
   while(queue.length){ const current=queue.shift(); const level=levels.get(current); if(Math.abs(level)>=maxDepth) continue;
     for(const rel of relationsFor(current,relations)){
       let other=null,nextLevel=null;
-      if(rel.type==='parent_of') { if(rel.fromId===current){other=rel.toId;nextLevel=level+1;} else {other=rel.fromId;nextLevel=level-1;} }
+      if(['parent_of','adoptive_parent_of','guardian_of'].includes(rel.type)) { if(rel.fromId===current){other=rel.toId;nextLevel=level+1;} else {other=rel.fromId;nextLevel=level-1;} }
       if(rel.type==='child_of') { if(rel.fromId===current){other=rel.toId;nextLevel=level-1;} else {other=rel.fromId;nextLevel=level+1;} }
+      if(['spouse_of','former_spouse_of','sibling_of'].includes(rel.type)){ other=rel.fromId===current?rel.toId:rel.fromId; nextLevel=level; }
       if(other&&!levels.has(other)){ levels.set(other,nextLevel); queue.push(other); }
     }
   }

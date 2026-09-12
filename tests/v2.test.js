@@ -6,7 +6,7 @@ import { APP_VERSION } from '../js/domain/schema.js';
 const root=new URL('../',import.meta.url);
 const read=async path=>readFile(new URL(path,root),'utf8');
 
-test('V2 identifies itself as 2.0.0',()=>{ assert.equal(APP_VERSION,'2.0.0'); });
+test('V3 identifies itself as 3.0.0',()=>{ assert.equal(APP_VERSION,'3.0.0'); });
 
 test('Wrangler binds the production D1 and R2 resources and disables alternate public endpoints',async()=>{
   const cfg=JSON.parse(await read('wrangler.jsonc'));
@@ -43,7 +43,7 @@ test('D1 migration defines every authoritative store plus R2 media metadata',asy
   assert.match(sql,/r2_key TEXT NOT NULL/);
 });
 
-test('V1 backup format remains supported for V2 migration',async()=>{
+test('V1 backup format remains supported for V3 migration',async()=>{
   const backup=await read('js/data/backup.js');
   const migrations=await read('js/data/migrations.js');
   assert.match(backup,/kayworks-world-bible-backup/);

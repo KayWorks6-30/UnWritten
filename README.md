@@ -1,190 +1,172 @@
-# UnWritten.KayWorks — V2.0.0
+# UnWritten.KayWorks — V3.0.0
 
-A private author workspace for worldbuilding, story planning, visual maps, mysteries, historical timelines, knowledge tracking, and long-term canon management.
+UnWritten.KayWorks is a private author workspace for canon, continuity, worldbuilding, plot planning, maps, story knowledge, and long-series organization.
 
-V2 is the storage transition release. The V1 authoring model and atlas remain intact, but **saved canon is no longer browser-only**:
-
-- Cloudflare **D1** is the authoritative structured database.
-- Private Cloudflare **R2** stores maps, character art, diagrams, and other uploaded media.
-- Cloudflare **Access** remains the authentication/front-door layer.
-- Browser **IndexedDB is used only for temporary unsaved drafts and read-only V1 migration detection**.
-- JSON, ZIP, and Markdown exports remain available so the project is not trapped in Cloudflare.
-
-## Production resources already configured
-
-The repository is wired to the production resources requested for this project:
-
-- Worker name: `unwritten`
-- Production hostname: `unwritten.kayworks.dev`
-- D1 database: `unwritten`
-- D1 database ID: `15ab3fb3-8673-4f5b-8633-1746fb6fa677`
-- D1 binding: `DB`
-- R2 bucket: `unwritten`
-- R2 binding: `MEDIA`
-- `workers.dev`: disabled
-- Worker preview URLs: disabled
-
-The D1 UUID and R2 bucket name are resource identifiers, not credentials. No API key, R2 S3 key, database password, or secret is stored in the frontend.
-
-## Architecture
+V3 keeps the V2 Cloudflare architecture and turns the application into a deeper narrative-intelligence workspace. The core design remains deliberately simple:
 
 ```text
-Cloudflare Access
-      │
-      ▼
-unwritten.kayworks.dev
-      │
-      ▼
-Cloudflare Worker: unwritten
-      │
-      ├── Static assets (vanilla HTML/CSS/JS)
-      ├── /api/*
-      │      ├── DB    → D1 unwritten
-      │      └── MEDIA → private R2 unwritten
-      │
 Browser
-      └── IndexedDB only for unsaved draft recovery
+  ↓
+Cloudflare Access
+  ↓
+Cloudflare Worker: unwritten
+  ├── D1: authoritative structured data
+  └── R2: authoritative private media
+
+IndexedDB: unsaved editor drafts / legacy V1 migration only
 ```
 
-The browser never receives D1 or R2 credentials. All authoritative writes happen through same-origin Worker API routes.
+There is one hosted environment: `unwritten.kayworks.dev`. Local development uses Wrangler's local resources; do not create a second hosted D1/R2/staging environment.
 
-## First production deployment
+## What V3 adds
 
-### 1. Keep a V1 backup first
+### Story Compass / Series Overview
 
-If the current V1 site contains any real data, **export a V1 ZIP backup before replacing the deployed V1 files**.
+The former Trilogy Overview is presented as a general Series Overview and can optionally capture the author's fixed story anchors:
 
-V2 still understands the V1 backup format, and a same-origin V1 IndexedDB database can also be detected from V2 Settings for direct migration.
+- starting state / opening promise
+- primary protagonists
+- end goal / destination
+- central prize, truth, answer, or equivalent destination
+- non-negotiable story truths
+- intended ending / final state
+- the existing beginning / midpoint / climax / ending planning fields
 
-### 2. Authenticate Wrangler
+These are optional. UnWritten does not require a writer to know the ending in advance.
 
-From this repository:
+### Continuity intelligence
+
+V3 adds derived views over canonical records rather than duplicating lore:
+
+- character knowledge at a selected Book / Chapter / Scene
+- reader knowledge at a selected story point
+- reader-vs-character knowledge gaps
+- Mystery → clue / red herring → reveal progression
+- scene continuity dashboards
+- backlinks / dependency impact
+- deterministic continuity warnings
+- plot-thread coverage analysis
+- character interaction matrices
+- location usage views
+
+Continuity warnings flag possible problems; they never rewrite canon automatically.
+
+### Plotting and author workflow
+
+- Plot Grid with reusable Plot Threads and Scene-linked beats
+- contextual scratch notes and record-linked tasks
+- saved views/workspaces
+- command-palette style global quick open (`Ctrl/Cmd + K`)
+- optional completeness prompts
+- automatic cross-link suggestions requiring confirmation
+- revision snapshots for edited entries
+- Focus Mode
+- lightweight scene manuscript drafting/export
+- lightweight whiteboard
+- simple placeholder/name generators
+- Reader Preview and static reader-safe HTML export
+
+### World tools
+
+- family trees derived from canonical relationships
+- faction/diplomacy view with optional Era / active-period metadata
+- generic relationship/content trees
+- multiple/parallel timeline views and filtering
+- optional custom calendar records
+- combined geographic/history navigation surfaces
+
+### Atlas / Maps
+
+The existing Location → Map → Map Version → Marker architecture remains authoritative. V3 expands the interface with:
+
+- 25%–300% zoom
+- map hierarchy breadcrumbs / drill-down
+- map layers
+- marker categories, symbols, labels, custom images and filters
+- marker clustering when zoomed out
+- draggable markers with persisted percentage coordinates
+- map search
+- character/book route records
+- historical map-version navigation
+- layer/era/book/faction/relevance metadata
+
+Remote R2 media now renders through the central URL abstraction rather than requiring browser Blob objects.
+
+## V3 security / data safety
+
+V3 strengthens the Worker rather than adding another login system:
+
+- Cloudflare Access remains the authentication provider.
+- The Worker verifies the `Cf-Access-Jwt-Assertion` JWT.
+- Verified Access email determines `Owner` vs `Reviewer`.
+- Reviewers are server-enforced read-only users.
+- Owner mutations remain available normally.
+- stale entity edits receive HTTP `409` instead of silently overwriting a newer revision
+- previous entity revisions are captured before successful overwrites
+- Location/Map parent cycles are rejected
+- generic deletion cannot bypass entity/map-version cascade logic
+- restores validate typed references and workspace references
+- R2 destructive deletion moves objects through `_trash/` first
+- restore staging continues under `_restore/`
+
+## Required production configuration
+
+Before deploying V3, configure these Worker variables:
+
+- `TEAM_DOMAIN` — your Access team URL, for example `https://example.cloudflareaccess.com`
+- `POLICY_AUD` — the Application Audience (AUD) tag for the Access application protecting `unwritten.kayworks.dev`
+- `OWNER_EMAILS` — comma-separated Access email addresses that should receive Owner mutation permissions
+
+These values are intentionally not hard-coded in the repository.
+
+See `docs/CLOUDFLARE-V3-SETUP.md` for exact setup and lifecycle commands.
+
+## Install
 
 ```bash
-npx wrangler login
+npm install
 ```
 
-### 3. Apply the D1 migration
+`package.json` pins:
 
-The `unwritten` D1 database already exists, but it is intentionally empty until this migration is applied:
-
-```bash
-npm run db:migrate:remote
-```
-
-This applies `migrations/0001_initial.sql` to the production D1 database.
-
-### 4. Deploy V2
-
-```bash
-npm run deploy
-```
-
-`npm run deploy` runs the complete verification/build first and then deploys the Worker plus static assets.
-
-The Worker configuration in `wrangler.jsonc` binds:
-
-```text
-DB    → D1 unwritten
-MEDIA → R2 unwritten
-```
-
-### 5. Confirm Cloudflare Access
-
-The hostname `unwritten.kayworks.dev` must remain protected by your Cloudflare Access policy.
-
-This repository intentionally disables `workers.dev` and preview URLs so those do not create alternate public routes around the protected production hostname.
-
-If `unwritten.kayworks.dev` is still attached to an old Cloudflare Pages project, remove that custom-domain attachment before the first Worker Custom Domain deployment. The Worker is now the origin for the hostname.
-
-### 6. Open Settings & Data
-
-The Cloud Storage card should show **Connected**.
-
-If the D1 migration was not applied, the app intentionally stops on a Storage Setup Required screen rather than silently falling back to browser-only data.
-
-## Migrating V1 data
-
-V2 supports two migration paths.
-
-### Same browser + same hostname
-
-If the old V1 IndexedDB still exists, Settings & Data shows **V1 browser migration**.
-
-Choose **Import V1 browser database**. V2 reads the legacy database without modifying it, validates the snapshot, uploads its media to R2, and atomically replaces the structured D1 dataset.
-
-The V1 browser database is retained afterward as an extra safety copy.
-
-### V1 JSON or ZIP
-
-Use **Restore JSON / ZIP** in Settings & Data.
-
-The existing `kayworks-world-bible-backup` format remains supported. ZIP remains preferred for projects with substantial media.
-
-## Restore behavior in V2
-
-Restores use a staged server workflow:
-
-1. Parse/migrate/validate the complete manifest.
-2. Create a temporary restore session in private R2.
-3. Upload each media file separately.
-4. Verify every expected media file exists.
-5. Write the complete D1 structured snapshot in one transactional `DB.batch()`.
-6. Switch media metadata to newly written R2 objects.
-7. Remove superseded R2 objects and temporary restore files.
-
-If the D1 transaction fails, the previous structured database remains unchanged and newly staged final objects are cleaned up.
-
-Restore remains **replace-only**, not merge, to keep recovery semantics deterministic.
-
-## Normal save behavior
-
-Entry save:
-
-```text
-Editor
-→ /api/store/entities/:id
-→ Worker validation
-→ D1
-```
-
-Media save:
-
-```text
-File picker
-→ /api/media/:id
-→ Worker
-→ private R2 object
-→ D1 media metadata
-```
-
-Map versions continue linking stable Map/Location IDs to media metadata rather than embedding map images in entity records.
-
-## Local draft recovery
-
-While an entry editor is open, unsaved text is cached locally in a separate IndexedDB database.
-
-That cache is **not canonical storage**. It exists only to recover accidental refreshes/tab closes before Save.
-
-Saved entries are removed from the draft cache after the D1 write succeeds.
+- `jose` for Access JWT validation
+- Wrangler for development/deployment
 
 ## Local development
 
-There is still only one Cloudflare production environment. Development uses Wrangler's local resource simulation rather than a second hosted site/database/bucket.
+Create a local `.dev.vars` file from `.dev.vars.example` and keep `DEV_AUTH_BYPASS=true` only for local development.
 
-First initialize local D1:
+Apply local migrations:
 
 ```bash
 npm run db:migrate:local
 ```
 
-Then run:
+Run the app:
 
 ```bash
 npm run dev
 ```
 
-Wrangler uses local simulated D1/R2 storage by default for local development, so normal development does not write to the production `unwritten` resources.
+Wrangler's local D1/R2 simulation keeps normal local development away from production resources.
+
+## Production migration / deploy
+
+Keep a ZIP backup before any major release.
+
+Apply all pending D1 migrations:
+
+```bash
+npm run db:migrate:remote
+```
+
+Then deploy:
+
+```bash
+npm run deploy
+```
+
+V3 adds `migrations/0002_v3_workspace.sql`. Existing V2 data remains in the original tables and is not replaced by the migration.
 
 ## Verification
 
@@ -192,34 +174,44 @@ Wrangler uses local simulated D1/R2 storage by default for local development, so
 npm run verify
 ```
 
-V2 verification includes:
+This runs:
 
-- domain/schema regression tests
-- backup/ZIP validation tests
-- V2 Cloudflare binding tests
-- D1 migration/table checks
-- remote-vs-local persistence-boundary checks
-- API service-worker cache protection
-- JS import checks
-- static asset checks
+- 44+ Node/domain/regression tests
+- JS/MJS syntax checks
+- clean in-memory SQLite migration smoke
+- production static build
+- asset/import checks
+- Cloudflare binding/config checks
 - duplicate HTML ID check
 - basic committed-secret/private-key scan
-- production static build
 
-## Important privacy boundary
+An additional real-browser smoke harness is available as:
 
-Cloudflare D1/R2 being private resources does **not** by itself authenticate visitors to the Worker. Keep Cloudflare Access enabled on the production Worker/hostname.
+```bash
+npm run browser:smoke
+```
 
-This repository does not contain a second username/password system.
+It launches Chromium against a local server snapshot to verify application boot and protected remote-media rendering. Managed browser environments that block loopback/local test origins can prevent this smoke from running; that is an environment restriction rather than an application fallback.
 
-## Portability
+## Backups and portability
 
-Even though D1/R2 are authoritative in V2, the application still supports:
+Cloud storage does not replace portable backups. V3 preserves:
 
-- full JSON backup
-- full ZIP backup with binary media
-- restore from JSON/ZIP
+- JSON export/restore
+- full ZIP export/restore with binary media
 - Markdown export
-- V1 backup import
+- V1/V2-compatible migration paths where supported
+- static reader-safe HTML export
 
-The goal is safer authoritative storage without turning the author's work into an opaque hosted-only format.
+The ZIP remains the complete independent recovery artifact for both D1 records and R2 media.
+
+## Production resources
+
+- Worker: `unwritten`
+- Hostname: `unwritten.kayworks.dev`
+- D1: `unwritten` (`DB` binding)
+- R2: `unwritten` (`MEDIA` binding)
+- `workers.dev`: disabled
+- preview URLs: disabled
+
+The D1 UUID and bucket name in `wrangler.jsonc` are resource identifiers, not credentials.

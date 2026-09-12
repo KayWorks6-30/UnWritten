@@ -1,5 +1,39 @@
 # Changelog
 
+## V3.0.0 — Canon intelligence and author workspace consolidation
+
+### Continuity / story intelligence
+- added character and reader knowledge inspection at Book/Chapter/Scene points
+- added reader/character knowledge asymmetry, Mystery progression, Scene Continuity, backlinks/impact, plot coverage, character interaction and location-usage derivations
+- added deterministic continuity warnings for hierarchy cycles, chronology ranges, birth/death/location existence, event dependencies, conflicting relationships/canon, and mystery setup
+
+### Series / plotting
+- generalized Trilogy Overview presentation to Series Overview without replacing the compatible entity type
+- added optional Story Compass anchors for starting state, protagonists, end goal, central prize/truth, non-negotiable truths and intended ending
+- added Plot Threads and Plot Grid beats tied to canonical Scenes
+
+### Author workflow
+- added contextual notes, tasks, saved views, dashboard customization, command-palette navigation, cross-link suggestions, completeness hints, Focus Mode, revision history, reader preview/static export, lightweight whiteboard, generators and manuscript drafting/export
+
+### Maps / world tools
+- fixed remote R2 media rendering, map zoom below 100%, help overflow, armed-pin leakage and editor double scrolling
+- added map layers, categories/icons/custom marker images, clustering, draggable markers, search/filtering, routes, hierarchy breadcrumbs and historical-version navigation
+- added custom calendars, parallel timeline/world tools, family/dynasty, diplomacy and generic content-tree views
+
+### Cloud/data hardening
+- added Cloudflare Access JWT validation with `TEAM_DOMAIN` / `POLICY_AUD`
+- added server-enforced Owner / Reviewer roles through verified Access email and `OWNER_EMAILS`
+- added optimistic entity concurrency conflicts and revision snapshots
+- added multi-node Location/Map cycle validation, typed restore references and protected cascade delete routes
+- added V3 workspace persistence migration, snapshot batching, R2 `_trash/` recovery flow and documented `_restore/` / `_trash/` lifecycle rules
+- fixed schema-version nullish fallback so explicit invalid version `0` remains invalid
+
+### Verification
+- expanded the Node suite to 44 tests
+- added true JS syntax checking and clean SQLite migration smoke
+- added an optional Chromium browser smoke harness for environments that allow local test origins
+- pinned direct Wrangler and `jose` versions in `package.json`
+
 ## V2.0.0 — Cloudflare-backed private workspace
 
 ### Storage architecture

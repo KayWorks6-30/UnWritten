@@ -46,8 +46,14 @@ try{
   if(cfg.workers_dev!==false||cfg.preview_urls!==false) errors.push('Alternate Worker endpoints must remain disabled for the private production app.');
 }catch(error){errors.push(`wrangler.jsonc is invalid JSON: ${error.message}`);}
 
-const migration=await readFile(join(root,'migrations','0001_initial.sql'),'utf8');
-for(const table of ['entities','relations','settings','media','clues','reveals','knowledge','map_versions','map_markers']) if(!new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`).test(migration)) errors.push(`D1 migration is missing ${table}.`);
+const migrations=(await Promise.all(['0001_initial.sql','0002_v3_workspace.sql'].map(name=>readFile(join(root,'migrations',name),'utf8')))).join('\n');
+for(const table of ['entities','relations','settings','media','clues','reveals','knowledge','map_versions','map_markers','workspace']) if(!new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`).test(migrations)) errors.push(`D1 migrations are missing ${table}.`);
+
+try{
+  const pkg=JSON.parse(await readFile(join(root,'package.json'),'utf8'));
+  if(!/^\d+\.\d+\.\d+$/.test(pkg.dependencies?.jose||'')) errors.push('jose must be pinned to an exact version.');
+  if(!/^\d+\.\d+\.\d+$/.test(pkg.devDependencies?.wrangler||'')) errors.push('Wrangler must be pinned to an exact version.');
+}catch(error){ errors.push(`package.json is invalid: ${error.message}`); }
 
 if(errors.length){ console.error(errors.map(e=>`- ${e}`).join('\n')); process.exit(1); }
-console.log('V2 verification passed: assets, imports, bindings, migrations, duplicate ids, and basic secret scan.');
+console.log('V3 verification passed: assets, imports, bindings, migrations, pinned direct dependencies, duplicate ids, and basic secret scan.');

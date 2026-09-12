@@ -1,6 +1,6 @@
-# V2.0.0 Release Verification
+# V3.0.0 Release Verification
 
-## Automated checks
+## Automated release gate
 
 Run:
 
@@ -8,47 +8,72 @@ Run:
 npm run verify
 ```
 
-V2 currently passes 33 automated Node tests covering the established domain behavior plus Cloudflare binding/storage-boundary regressions.
+The release gate covers:
 
-The release verification also checks:
-
-- JS source syntax/import targets
-- HTML asset references
+- domain/schema/search/story/relationship regressions
+- backup migration/validation/ZIP integrity
+- schema `0` rejection and future-schema rejection
+- typed restore references
+- multi-node Location/Map cycle rejection
+- V3 workspace reference model
+- knowledge-at-story-point and reader/character asymmetry
+- mystery multi-link/progression behavior
+- deterministic continuity warnings
+- plot coverage and character interaction derivations
+- Cloudflare binding and privacy boundaries
+- Worker JWT/reviewer/concurrency/delete/revision/R2-trash hardening assertions
+- remote-media and map-zoom regressions
+- JS/MJS syntax checks
+- clean SQLite migration smoke
+- production static build
+- asset/import/config checks
 - duplicate HTML IDs
-- exact production D1 binding name/database UUID
-- exact production R2 binding name/bucket
-- `workers.dev` and preview URLs disabled
-- D1 migration includes all authoritative tables
-- service worker excludes `/api/*` from Cache Storage
-- basic committed-secret/private-key markers
-- static asset build
+- basic committed-secret/private-key scan
 
-The initial migration SQL has also been smoke-tested against SQLite successfully.
+## Browser smoke
 
-## Required live Cloudflare smoke test
+When the environment permits a local Chromium origin:
 
-These cannot be truthfully verified inside the build container because it has no authenticated access to the user's Cloudflare account/resources.
+```bash
+npm run browser:smoke
+```
 
-After first deployment:
+The smoke boots the real browser client against a local HTTP/API fixture and checks Media/Maps rendering with R2-style protected URLs.
 
-1. Confirm Access login is required at `unwritten.kayworks.dev`.
-2. Confirm Settings & Data shows Cloud Storage: Connected.
-3. Create one temporary Lore entry and reload the page.
-4. Confirm it survives reload and appears from a second browser session after Access login.
-5. Upload one temporary image; confirm it renders after reload.
-6. Create a temporary map using that image and place a location marker.
-7. Export ZIP.
-8. Create another temporary record.
-9. Restore the ZIP and confirm the post-backup record disappears while backed-up records/media return.
-10. If migrating V1, verify record/media counts against the V1 backup before starting serious authoring.
-11. Delete all temporary smoke-test entries/media you do not want retained.
+If a managed Chromium policy blocks loopback/local test origins, record that as an environment limitation and perform the equivalent local Wrangler browser smoke manually.
 
-## Rollback posture
+## Pre-deploy checklist
 
-Keep:
+1. Export and retain a full production ZIP backup.
+2. Confirm `TEAM_DOMAIN`, `POLICY_AUD`, and `OWNER_EMAILS` are configured.
+3. Confirm `DEV_AUTH_BYPASS` is not configured in production.
+4. Apply `npm run db:migrate:remote`.
+5. Configure `_restore/` and `_trash/` R2 lifecycle rules.
+6. Run `npm run verify`.
+7. Deploy with `npm run deploy`.
 
-- the final V1.1.x ZIP backup
-- the V1.1.1 repository/release
-- the first successful V2 ZIP backup
+## Production acceptance
 
-D1 also provides Cloudflare-managed recovery capabilities, but portable exports remain part of the project's recovery strategy.
+Owner:
+
+- health endpoint reports `3.0.0`, correct email and `owner`
+- old production content still loads
+- entity save/reload works
+- stale two-browser edit returns a conflict instead of silent overwrite
+- previous entity revision appears after edit
+- remote media renders after reload
+- map zoom, layers, marker drag/search/filter/drill-down work
+- backup/export and restore staging work
+- Story Compass is optional and does not affect old Series/Trilogy data
+- Continuity, Plot Grid, World Tools, Workbench, Reader Preview routes open
+
+Reviewer:
+
+- can browse all intended read surfaces
+- cannot mutate data through UI
+- direct non-GET API mutation is rejected
+
+Recovery:
+
+- create a fresh V3 ZIP backup after the deployment is proven
+- keep the pre-upgrade backup until the release has been used successfully

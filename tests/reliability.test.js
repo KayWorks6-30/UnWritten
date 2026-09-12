@@ -16,7 +16,7 @@ function validSnapshot(){
     relations:[{id:'rel-1',fromId:'kingdom',toId:'world',type:'located_in',note:'',createdAt:new Date().toISOString()}],
     settings:[{key:'project',value:{name:'Galatea',currentBookId:null,schemaVersion:SCHEMA_VERSION}}],
     media:[{id:'media-1',name:'map.png',title:'Map',mime:'image/png',size:1,blob:new Blob([new Uint8Array([1])],{type:'image/png'}),tags:['map'],entityIds:['map-world'],createdAt:new Date().toISOString()}],
-    clues:[],reveals:[],knowledge:[],
+    clues:[],reveals:[],knowledge:[],workspace:[],
     mapVersions:[{id:'version-1',mapId:'map-world',mediaId:'media-1',label:'Current',variant:'World',effectiveDate:'',notes:'',createdAt:new Date().toISOString()}],
     mapMarkers:[{id:'marker-1',mapVersionId:'version-1',locationId:'kingdom',x:50,y:50,createdAt:new Date().toISOString()}]
   };

@@ -1,42 +1,48 @@
-# Architecture — V2.0.0
+# Architecture — V3.0.0
 
-## Purpose
+## Product boundary
 
-UnWritten.KayWorks is a private single-author worldbuilding and story-planning workspace. V2 deliberately introduces a backend because the project is expected to contain years of irreplaceable writing and media, and the author has chosen a private Cloudflare-hosted deployment protected by Access.
+UnWritten.KayWorks is a private author database and narrative-continuity workspace. It is not a generic SaaS platform and V3 does not introduce another framework, graph database, GIS stack, collaboration protocol, or second authentication system.
 
-This is not a generic multi-user SaaS architecture.
-
-## Persistence boundary
-
-### Authoritative
-
-- **D1**: structured canon/story data
-- **R2**: image/map/media binaries
-
-### Local only
-
-- **IndexedDB draft cache**: unsaved editor recovery
-- **legacy V1 IndexedDB**: read-only migration source when detected
-- Service Worker Cache Storage: application shell only, never API data
-
-The UI does not manipulate D1 or R2 directly. `js/data/db.js` is the browser persistence boundary and speaks only to same-origin `/api/*` routes.
-
-## Cloudflare resources
+## Runtime
 
 ```text
-Worker: unwritten
-Custom Domain: unwritten.kayworks.dev
-D1 binding: DB → unwritten
-R2 binding: MEDIA → unwritten
-workers.dev: disabled
-preview URLs: disabled
+Cloudflare Access
+      │
+      ▼
+unwritten.kayworks.dev
+      │
+      ▼
+Cloudflare Worker
+      │
+      ├── static vanilla HTML/CSS/JS
+      ├── /api/*
+      │    ├── D1 (structured source of truth)
+      │    └── private R2 (binary source of truth)
+      │
+Browser
+      └── IndexedDB: unsaved drafts / read-only V1 migration source only
 ```
 
-The production hostname must remain protected by Cloudflare Access.
+## Authentication and authorization
 
-## D1 tables
+Every `/api/*` request is authenticated inside the Worker by validating Cloudflare Access's `Cf-Access-Jwt-Assertion` against:
 
-V2 uses explicit tables for the existing domain stores:
+- `TEAM_DOMAIN`
+- `POLICY_AUD`
+
+The verified JWT email is compared with `OWNER_EMAILS`.
+
+- Owner: read + mutation routes
+- Reviewer: read-only API access
+
+UI hiding is convenience only. The Worker rejects reviewer mutations server-side.
+
+`DEV_AUTH_BYPASS` exists only for local Wrangler development and must not be configured in production.
+
+## Structured storage
+
+D1 tables:
 
 - `entities`
 - `relations`
@@ -47,117 +53,100 @@ V2 uses explicit tables for the existing domain stores:
 - `knowledge`
 - `map_versions`
 - `map_markers`
+- `workspace`
 
-Flexible type-specific entry fields stay JSON in `entities.fields_json`. Tags and similar flexible arrays are also stored as JSON. This preserves the useful V1 entity envelope without creating dozens of narrow tables.
+The flexible entity envelope remains authoritative:
 
-## R2 model
+```text
+id, type, name, summary, status, tags, favorite,
+fields, notes, archivedAt, createdAt, updatedAt
+```
 
-R2 stores only binary media. D1's `media` table stores metadata and the private `r2_key`.
+Type-specific lore remains in `fields_json` rather than one SQL table per lore type.
 
-R2 has no public custom domain and does not require S3 credentials for this application. The Worker uses the `MEDIA` binding.
+### Workspace records
 
-The browser requests a protected same-origin URL:
+The V3 `workspace` table stores non-canon authoring/support records with a small generic envelope:
+
+```text
+id, kind, title, data, createdAt, updatedAt
+```
+
+Current kinds include plot threads/beats, contextual notes, tasks, saved views, custom calendars/dates, map layers/routes, whiteboard nodes/edges, manuscript documents, entry revisions, and reader profiles.
+
+This deliberately avoids creating a dozen tiny databases while keeping these records portable and referentially validated.
+
+## Derived intelligence
+
+Graphs, family trees, backlinks, interaction matrices, plot coverage, continuity dashboards, reader views, diplomacy views, location usage, and knowledge-at-scene answers are derived from the canonical stores.
+
+They are views, not parallel truth stores.
+
+## Optimistic concurrency and revisions
+
+Entity editors retain the `updatedAt` value loaded from D1. Update requests send that as `x-base-updated-at`.
+
+If D1 contains a different revision, the Worker returns HTTP `409` and does not overwrite the newer record.
+
+Immediately before a successful overwrite, the Worker stores the previous entity snapshot as a `revision` workspace record.
+
+This is deliberately lightweight: no CRDTs, WebSockets, or real-time collaborative editing.
+
+## Referential integrity
+
+Both ordinary writes and backup restore validate domain references. V3 additionally protects:
+
+- multi-node Location and Map hierarchy cycles
+- typed Book / Chapter / Scene references
+- Plot Thread / Plot Beat references
+- Map Layer / Route references
+- marker media/layer/faction/book references
+- custom calendar references
+- reader/manuscript references
+- whiteboard graph references
+
+Entity and Map Version deletion use dedicated cascade routes. Generic store deletion cannot bypass those routes.
+
+## R2 media lifecycle
+
+Live media is private and served through:
 
 ```text
 /api/media/:id/content
 ```
 
-The Worker looks up the private R2 key in D1 and streams the object.
+Remote media objects expose a protected URL to the UI. Rendering must use the central media URL abstraction rather than Blob existence.
 
-## API
+Deleted/superseded live media is copied to `_trash/` before the live key is deleted. Restore uploads stage under `_restore/`.
 
-Primary routes:
+Production should have lifecycle rules for both prefixes so abandoned restore sessions and deleted-media recovery objects do not grow forever. See `CLOUDFLARE-V3-SETUP.md`.
 
-- `GET /api/health`
-- `GET /api/snapshot`
-- `PUT/DELETE /api/store/:store/:key`
-- `PUT/DELETE /api/media/:id`
-- `GET /api/media/:id/content`
-- `DELETE /api/entities/:id/cascade`
-- `DELETE /api/map-versions/:id/cascade`
-- staged restore routes under `/api/restore/*`
+## Backup/restore
 
-The API is same-origin and intended to sit behind Cloudflare Access.
-
-## Data loading
-
-The V1 UI expected a local `getAll(store)` API. V2 keeps that interface but implements it using a shared in-flight `/api/snapshot` request. A UI refresh that asks for all nine stores therefore does not issue nine remote database requests.
-
-Any successful mutation invalidates the browser-side snapshot cache.
-
-## Mutation validation
-
-The Worker validates authoritative writes, including:
-
-- entry schema/type/status
-- relationship type and endpoints
-- hierarchy references
-- story references
-- mystery/clue links
-- knowledge subject/character references
-- map/media/location references
-- marker coordinates
-- current-book references
-
-Backup restores receive full cross-store validation before commit.
-
-## Restore transaction model
-
-D1 `batch()` is used as the transactional structured-data boundary.
-
-R2 and D1 cannot share one distributed ACID transaction, so V2 uses staged object keys:
+Portable backups remain first-class. Restore follows:
 
 ```text
-validate manifest
-→ stage restore media under _restore/<session>/...
-→ confirm every media file exists
-→ copy each to a new immutable-ish final key
-→ transactional D1 replace points metadata at those new keys
-→ delete old R2 media
-→ delete temporary restore objects
+parse → migrate → validate complete snapshot
+      → stage restore manifest/media in R2
+      → verify expected media
+      → transactional D1 batch replacement
+      → finalize R2 media
+      → move superseded live media to trash
+      → cleanup restore staging
 ```
 
-If D1 commit fails, new final R2 keys are deleted and the previous D1 snapshot remains authoritative.
+D1 and R2 cannot form one distributed ACID transaction. The staged model prevents a failed structured commit from first destroying the prior media set.
 
-This is much safer than clearing/replacing each store independently.
+## Snapshot loading
 
-## V1 compatibility
+The browser keeps the existing `getAll(store)` abstraction but coalesces reads into one `/api/snapshot` request. The Worker batches D1 SELECT statements and can log payload/row timing information without adding premature pagination.
 
-The portable backup identifier remains:
+## Story Compass
 
-`kayworks-world-bible-backup`
+Series Overview continues using the existing `trilogy` entity type for compatibility. V3 generalizes its label and fields instead of creating a competing Series table. Story Compass fields are optional planning anchors, not required canon.
 
-It is intentionally not renamed because that string is a compatibility contract, not branding.
+## Compatibility
 
-V2 can also detect the legacy V1 IndexedDB database named `kayworks_world_bible` on the same origin. It only reads that database for explicit migration and does not delete it.
+V3 schema version: `6`.
 
-## Draft recovery
-
-Drafts use a separate database named `unwritten_local_drafts`.
-
-A draft stores:
-
-- entry ID
-- current unsaved entity snapshot
-- base server `updatedAt`
-- local `savedAt`
-
-A draft is auto-recovered only when its base revision still matches the current server entry, avoiding blind overwrites after another device has changed the record.
-
-## Authentication
-
-UnWritten does not implement accounts/passwords.
-
-Cloudflare Access is the authentication boundary. `workers.dev` and preview URLs are disabled to reduce alternate public ingress.
-
-A future defense-in-depth enhancement could validate Access JWT audience/signature in the Worker once the project's Team Domain and Application AUD are intentionally added to deployment configuration. It is not fabricated or hard-coded in V2 because those account-specific values were not supplied.
-
-## Offline behavior
-
-V2 is **not an offline-authoritative application**. The service worker caches only the application shell. API requests bypass Cache Storage and always go to the Worker.
-
-If the network is unavailable, unsaved text can still remain in the local draft cache, but canonical reads/writes require the server.
-
-## Why no framework migration
-
-The existing vanilla UI/domain architecture remains appropriate. The storage boundary changed because the reliability requirement changed; that does not create a reason to rewrite the frontend in React/Vue/TypeScript or introduce a separate application server.
+V3 preserves the established backup format identifier and migration behavior so historical exports are not renamed merely because the runtime architecture evolved.

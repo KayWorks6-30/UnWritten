@@ -1,9 +1,10 @@
-export const APP_VERSION = '2.0.0';
-export const SCHEMA_VERSION = 5;
+export const APP_VERSION = '3.0.0';
+export const SCHEMA_VERSION = 6;
 
 export const DATE_UNCERTAINTY = ['Exact','Approximate','Range','Traditional','Disputed','Unknown'];
-export const KNOWLEDGE_STATES = ['Knows truth','Partial truth','Incorrect belief','Unaware','Unknown'];
+export const KNOWLEDGE_STATES = ['Knows truth','Partial truth','Incorrect belief','Unaware','Forgotten','Rejected truth','Unknown'];
 export const MAP_VARIANTS = ['World','Continent','Country','City','Political','Physical','Historical','Exploration','Ancient','Current','Other'];
+export const WORKSPACE_KINDS = ['plotThread','plotBeat','contextNote','task','savedView','calendar','calendarDate','mapLayer','mapRoute','whiteboardNode','whiteboardEdge','manuscriptDocument','revision','readerProfile'];
 
 export const CANON_STATUSES = ['Canon', 'Provisional', 'Concept', 'Contradicted', 'Shelved', 'Unknown'];
 export const QUESTION_STATUSES = ['Open', 'Exploring', 'Answered', 'Shelved'];
@@ -56,6 +57,8 @@ export const ENTRY_TYPES = {
       { key: 'population', label: 'Population', type: 'text' },
       { key: 'government', label: 'Government', type: 'text' },
       { key: 'history', label: 'History', type: 'textarea' },
+      { key: 'existsFrom', label: 'Exists From (sortable year, optional)', type: 'number' },
+      { key: 'existsTo', label: 'Exists To (sortable year, optional)', type: 'number' },
       ...baseKnowledge
     ]
   },
@@ -70,6 +73,7 @@ export const ENTRY_TYPES = {
       { key: 'era', label: 'Legacy Era Note', type: 'text' },
       { key: 'duration', label: 'Duration', type: 'text' },
       { key: 'timelineOrder', label: 'Manual Timeline Sort Override', type: 'number' },
+      { key: 'locationId', label: 'Structured Location', type: 'entity', entityTypes: ['location'] },
       { key: 'locationText', label: 'Location', type: 'text' },
       { key: 'cause', label: 'Cause', type: 'textarea' },
       { key: 'event', label: 'What Happened', type: 'textarea' },
@@ -125,6 +129,9 @@ export const ENTRY_TYPES = {
       { key: 'age', label: 'Age', type: 'text' },
       { key: 'birth', label: 'Birth', type: 'text' },
       { key: 'death', label: 'Death', type: 'text' },
+      { key: 'birthSort', label: 'Birth (sortable year, optional)', type: 'number' },
+      { key: 'deathSort', label: 'Death (sortable year, optional)', type: 'number' },
+      { key: 'revivalSort', label: 'Revival / Return (sortable year, optional)', type: 'number' },
       { key: 'lifeStatus', label: 'Status', type: 'text' },
       { key: 'speciesPeople', label: 'Species / People', type: 'text' },
       { key: 'homeland', label: 'Homeland', type: 'text' },
@@ -218,9 +225,15 @@ export const ENTRY_TYPES = {
     ]
   },
   trilogy: {
-    label: 'Trilogy Overview', group: 'Story', icon: 'III',
+    label: 'Series Overview', group: 'Story', icon: 'III',
     fields: [
       { key: 'centralPremise', label: 'Central Premise', type: 'textarea' },
+      { key: 'startingState', label: 'Starting State / Opening Promise', type: 'textarea' },
+      { key: 'protagonists', label: 'Primary Protagonists', type: 'text' },
+      { key: 'endGoal', label: 'End Goal / Destination', type: 'textarea' },
+      { key: 'centralPrizeTruth', label: 'Central Prize / Truth / Answer', type: 'textarea' },
+      { key: 'nonNegotiableTruths', label: 'Non-negotiable Story Truths', type: 'textarea' },
+      { key: 'intendedEnding', label: 'Intended Ending / Final State', type: 'textarea' },
       { key: 'themes', label: 'Themes', type: 'textarea' },
       { key: 'majorCharacterArcs', label: 'Major Character Arcs', type: 'textarea' },
       { key: 'majorMysteries', label: 'Major Mysteries', type: 'textarea' },
@@ -267,15 +280,19 @@ export const ENTRY_TYPES = {
       { key: 'parentChapterId', label: 'Chapter', type: 'entity', entityTypes: ['chapter'] },
       { key: 'order', label: 'Scene Order', type: 'number' },
       { key: 'pov', label: 'POV', type: 'text' },
+      { key: 'locationId', label: 'Structured Location', type: 'entity', entityTypes: ['location'] },
       { key: 'locationText', label: 'Location', type: 'text' },
       { key: 'timeText', label: 'Time', type: 'text' },
+      { key: 'storyDate', label: 'Story / World Date', type: 'text' },
+      { key: 'storyDateSort', label: 'Sortable Story Date (optional)', type: 'number' },
       { key: 'purpose', label: 'Purpose', type: 'textarea' },
       { key: 'conflict', label: 'Conflict', type: 'textarea' },
       { key: 'outcome', label: 'Outcome', type: 'textarea' },
       { key: 'worldbuilding', label: 'Worldbuilding', type: 'textarea' },
       { key: 'characterDevelopment', label: 'Character Development', type: 'textarea' },
       { key: 'foreshadowing', label: 'Foreshadowing', type: 'textarea' },
-      { key: 'reveal', label: 'Reveal', type: 'textarea' }
+      { key: 'reveal', label: 'Reveal', type: 'textarea' },
+      { key: 'manuscriptText', label: 'Manuscript Draft', type: 'textarea' }
     ]
   },
   mystery: {
@@ -335,7 +352,9 @@ export const RELATION_TYPES = [
   'related_to', 'parent_of', 'child_of', 'sibling_of', 'friend_of', 'rival_of', 'enemy_of',
   'romantic_with', 'mentor_of', 'student_of', 'ally_of', 'political_enemy_of', 'member_of',
   'located_in', 'belongs_to', 'created_by', 'owned_by', 'participated_in', 'influenced',
-  'appears_in', 'introduced_in', 'clue_in', 'revealed_in', 'foreshadows', 'contradicts', 'supports', 'converted_to'
+  'appears_in', 'introduced_in', 'clue_in', 'revealed_in', 'foreshadows', 'contradicts', 'supports', 'converted_to',
+  'spouse_of', 'former_spouse_of', 'guardian_of', 'adoptive_parent_of', 'allied_with', 'hostile_to', 'neutral_with',
+  'vassal_of', 'trade_partner_with', 'occupied_by', 'at_war_with', 'contains', 'part_of', 'precedes', 'requires'
 ];
 
 export function defaultStatusFor(type) {

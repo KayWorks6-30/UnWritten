@@ -1,49 +1,85 @@
-# Roadmap Status — V2.0.0
+# Roadmap Status — V3.0.0
 
-## Completed product foundation
+V3 is the consolidation release requested after V2. It combines the previously planned hardening/reviewer work with the Future Feature Direction into one major release while retaining the existing Cloudflare and flexible-entity architecture.
 
-The original authoring roadmap is implemented:
+## Implemented V3 themes
 
-- typed lore/wiki entries
-- canon/question/idea state systems
-- knowledge layers
-- hierarchical geography
-- visual atlas with world/area drill-down maps
-- history/eras/timeline uncertainty
-- story/trilogy/books/chapters/scenes
-- mysteries, structured clues, reveals, foreshadowing
-- relationship graphs and family trees
-- character/reader knowledge records
-- archive/restore/permanent-delete safeguards
-- reusable media library
-- JSON, ZIP, and Markdown portability
+### Canon / continuity intelligence
 
-## V2 storage transition — complete
+- character knowledge at story point
+- reader knowledge at story point
+- knowledge asymmetry
+- mystery/clue/red-herring/reveal progression
+- deterministic contradiction/chronology warnings
+- backlinks / dependency impact
+- scene continuity dashboard
+- reader-safe preview derived from Reveal/Knowledge data
 
-- D1 authoritative structured data
-- private R2 authoritative media
-- same-origin Worker API
-- production binding configuration
-- D1 schema migration
-- V1 JSON/ZIP import compatibility
-- same-origin V1 IndexedDB migration helper
-- staged R2 + transactional D1 restore flow
-- local unsaved-draft recovery
-- API cache exclusion from the service worker
-- no dev Cloudflare environment; local Wrangler resources only
+### Plot / series planning
 
-## Next phase
+- optional Story Compass on Series Overview
+- Plot Threads + Plot Grid beats tied to canonical Scenes
+- plot-thread coverage
+- series-level overview
+- character interaction matrix
+- drag/reorder-oriented canonical story organization where supported
 
-Do not create another speculative architecture roadmap immediately.
+### Maps / timelines / world structure
 
-Use UnWritten on the real project and collect concrete authoring friction. Candidate improvements should be driven by repeated real use, such as:
+- deeper map versions and historical navigation
+- layers
+- category/custom-image markers
+- drag repositioning
+- clustering
+- search/filtering
+- map hierarchy/breadcrumbs
+- character/book routes
+- timeline filtering/parallel views
+- map/history cross-navigation
+- family/dynasty derivation
+- diplomacy/faction relationships
+- generic content trees
+- custom calendar records
 
-- polygon/region hotspots instead of pin-only maps
-- editor keyboard shortcuts
-- richer text/Markdown editing if plain text becomes limiting
-- bulk tag/status operations
-- stronger search if the real dataset becomes large enough to justify it
-- revision history for individual entries if accidental content replacement becomes a real problem
-- scheduled server-side backup/snapshot tooling if D1 Time Travel + manual exports prove insufficient
+### Daily author workflow
 
-The default next action after V2 is **authoring**, not another stack migration.
+- contextual notes
+- tasks
+- global quick open / commands
+- cross-link suggestions
+- saved views
+- customizable dashboard widgets
+- improved filtering/search surfaces
+- optional completeness prompts
+- revision awareness
+- Focus Mode
+- lightweight whiteboard
+- simple generators
+- scene manuscript drafting/export
+
+### Reliability / security
+
+- Access JWT validation
+- Owner / Reviewer server authorization
+- optimistic concurrency
+- revision snapshots
+- hierarchy-cycle rejection
+- typed restore reference validation
+- safe delete routing
+- snapshot D1 batching
+- R2 restore staging / deleted-media lifecycle strategy
+- remote-media rendering fixes
+- map zoom/help/pin-state fixes
+- editor single-scroll-region fix
+- pinned direct dependency versions
+- stronger verification and migration smoke
+
+## Product posture after V3
+
+Do not immediately create another architecture generation.
+
+Use V3 for real writing and collect concrete friction. Future releases should primarily refine the new workspaces, improve author ergonomics, and deepen deterministic continuity rules where actual projects reveal gaps.
+
+The center of UnWritten remains:
+
+**What is true, who knows it, when they know it, where it happened, how the reader learns it, and what depends on it.**

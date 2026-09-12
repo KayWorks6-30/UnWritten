@@ -1,15 +1,24 @@
 {
   "name": "unwritten-kayworks",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.js",
     "build": "node scripts/build.mjs",
-    "verify": "npm test && npm run build && node scripts/verify.mjs",
-    "dev": "npm run build && npx wrangler dev",
-    "db:migrate:local": "npx wrangler d1 migrations apply unwritten --local",
-    "db:migrate:remote": "npx wrangler d1 migrations apply unwritten --remote",
-    "deploy": "npm run verify && npx wrangler deploy"
+    "syntax": "node scripts/syntax.mjs",
+    "verify": "npm test && npm run syntax && npm run migration:smoke && npm run build && node scripts/verify.mjs",
+    "dev": "npm run build && wrangler dev",
+    "db:migrate:local": "wrangler d1 migrations apply unwritten --local",
+    "db:migrate:remote": "wrangler d1 migrations apply unwritten --remote",
+    "deploy": "npm run verify && wrangler deploy",
+    "migration:smoke": "node scripts/migration-smoke.mjs",
+    "browser:smoke": "node scripts/browser-smoke.mjs"
+  },
+  "dependencies": {
+    "jose": "6.2.12"
+  },
+  "devDependencies": {
+    "wrangler": "4.131.1"
   }
 }

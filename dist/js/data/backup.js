@@ -5,13 +5,15 @@ import { assertValidBackupSnapshot } from './validation.js';
 import { makeZip, readZip } from './zip.js';
 
 function blobToDataUrl(blob) { return new Promise((resolve,reject)=>{ const reader=new FileReader(); reader.onload=()=>resolve(reader.result); reader.onerror=()=>reject(reader.error); reader.readAsDataURL(blob); }); }
-async function mediaToPortable(item){ if(!(item.blob instanceof Blob)) return item; const {blob,...rest}=item; return {...rest,dataUrl:await blobToDataUrl(blob)}; }
+async function mediaBlob(item){ if(item.blob instanceof Blob) return item.blob; if(item.url){ const response=await fetch(item.url,{cache:'no-store'}); if(!response.ok) throw new Error(`Could not download media ${item.id}.`); return response.blob(); } throw new Error(`Media ${item.id} has no downloadable payload.`); }
+async function mediaToPortable(item){ const blob=await mediaBlob(item); const {url,r2Key,blob:_ignored,...rest}=item; return {...rest,dataUrl:await blobToDataUrl(blob)}; }
 async function portableToMedia(item){ if(!item.dataUrl) return item; const response=await fetch(item.dataUrl); if(!response.ok) throw new Error(`Could not decode media ${item.id}.`); const blob=await response.blob(); const {dataUrl,...rest}=item; return {...rest,blob}; }
 
 export async function buildBackup({includeMedia=true, portableMedia=true}={}) {
-  const [entities,relations,mediaRaw,settings,clues,reveals,knowledge,mapVersions,mapMarkers]=await Promise.all(DATA_STORES.map(getAll));
-  const media = includeMedia ? (portableMedia ? await Promise.all(mediaRaw.map(mediaToPortable)) : mediaRaw) : [];
-  return { format:'kayworks-world-bible-backup', appVersion:APP_VERSION, schemaVersion:SCHEMA_VERSION, exportedAt:new Date().toISOString(), entities,relations,settings,media,clues,reveals,knowledge,mapVersions,mapMarkers };
+  const values=await Promise.all(DATA_STORES.map(getAll));
+  const stores=Object.fromEntries(DATA_STORES.map((name,index)=>[name,values[index]]));
+  stores.media = includeMedia ? (portableMedia ? await Promise.all(stores.media.map(mediaToPortable)) : stores.media) : [];
+  return { format:'kayworks-world-bible-backup', appVersion:APP_VERSION, schemaVersion:SCHEMA_VERSION, exportedAt:new Date().toISOString(), ...stores };
 }
 
 export function downloadBlob(blob,filename){ const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),0); }
@@ -36,9 +38,9 @@ function extensionFor(item){ const byMime={'image/png':'png','image/jpeg':'jpg',
 
 export async function buildZipBackup(){
   const backup=await buildBackup({includeMedia:false}); const media=await getAll('media');
-  backup.media=media.map(({blob,...item})=>({...item,archivePath:`media/${item.id}.${extensionFor(item)}`}));
+  backup.media=media.map(({blob,url,r2Key,...item})=>({...item,archivePath:`media/${item.id}.${extensionFor(item)}`}));
   const entries=[{name:'manifest.json',data:JSON.stringify(backup,null,2)}];
-  for(const item of media){ if(!(item.blob instanceof Blob)) throw new Error(`Media ${item.id} is missing its local image blob.`); entries.push({name:`media/${item.id}.${extensionFor(item)}`,data:item.blob}); }
+  for(const item of media){ const blob=await mediaBlob(item); entries.push({name:`media/${item.id}.${extensionFor(item)}`,data:blob}); }
   return makeZip(entries);
 }
 
