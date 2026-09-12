@@ -1,9 +1,10 @@
-const CACHE = 'unwritten-kayworks-v2.0.0';
+const CACHE = 'unwritten-v3.0.0';
 const SHELL = [
-  './', './index.html', './styles.css', './manifest.webmanifest',
+  './', './index.html', './styles.css', './manifest.webmanifest', './assets/favicon.ico', './assets/unwritten-icon-32.png', './assets/unwritten-icon-180.png', './assets/unwritten-icon-192.png', './assets/unwritten-icon-512.png',
   './js/app.js',
   './js/data/db.js', './js/data/drafts.js', './js/data/legacy.js', './js/data/backup.js', './js/data/migrations.js', './js/data/validation.js', './js/data/zip.js', './js/data/markdown.js',
-  './js/domain/schema.js', './js/domain/search.js', './js/domain/relations.js', './js/domain/timeline.js', './js/domain/story.js', './js/domain/graphs.js'
+  './js/domain/schema.js', './js/domain/search.js', './js/domain/relations.js', './js/domain/timeline.js', './js/domain/story.js', './js/domain/graphs.js', './js/domain/intelligence.js',
+  './js/ui/v3.js'
 ];
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(()=>self.skipWaiting())));
 self.addEventListener('activate', event => event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(()=>self.clients.claim())));
@@ -11,5 +12,10 @@ self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
   const url=new URL(event.request.url);
   if(url.pathname.startsWith('/api/')) { event.respondWith(fetch(event.request)); return; }
-  event.respondWith(caches.match(event.request).then(hit => hit || fetch(event.request)));
+  event.respondWith((async()=>{
+    const hit=await caches.match(event.request); if(hit) return hit;
+    const response=await fetch(event.request);
+    if(response.ok && url.origin===self.location.origin) await caches.open(CACHE).then(cache=>cache.put(event.request,response.clone()));
+    return response;
+  })());
 });

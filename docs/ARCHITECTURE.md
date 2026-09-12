@@ -88,7 +88,7 @@ Entity editors retain the `updatedAt` value loaded from D1. Update requests send
 
 If D1 contains a different revision, the Worker returns HTTP `409` and does not overwrite the newer record.
 
-Immediately before a successful overwrite, the Worker stores the previous entity snapshot as a `revision` workspace record.
+The Worker stores the previous entity snapshot as a `revision` workspace record in the same D1 batch as the entity overwrite, so revision creation and the new entity version commit together.
 
 This is deliberately lightweight: no CRDTs, WebSockets, or real-time collaborative editing.
 
@@ -139,7 +139,7 @@ D1 and R2 cannot form one distributed ACID transaction. The staged model prevent
 
 ## Snapshot loading
 
-The browser keeps the existing `getAll(store)` abstraction but coalesces reads into one `/api/snapshot` request. The Worker batches D1 SELECT statements and can log payload/row timing information without adding premature pagination.
+The browser keeps the existing `getAll(store)` abstraction but coalesces reads into one `/api/snapshot` request. The Worker batches D1 SELECT statements and logs payload/row timing information without adding premature pagination. Cold `revision` rows are excluded from the normal snapshot and fetched lazily for the selected entity; explicit backup exports request revision history separately so recovery remains complete.
 
 ## Story Compass
 

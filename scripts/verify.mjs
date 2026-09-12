@@ -22,6 +22,25 @@ for(const file of sourceFiles){
 }
 
 const html=await readFile(join(root,'index.html'),'utf8');
+
+const sw=await readFile(join(root,'sw.js'),'utf8');
+if(!/const CACHE = ['"]unwritten-v3\.0\.0['"]/.test(sw)) errors.push('Service worker cache name must identify V3.0.0.');
+const shell=new Set([...sw.matchAll(/['"](\.\/js\/[^'"]+\.js)['"]/g)].map(m=>m[1]));
+async function importGraph(entry,seen=new Set()){
+  const absolute=resolve(root,entry); if(seen.has(absolute)) return seen; seen.add(absolute);
+  const source=await readFile(absolute,'utf8');
+  for(const match of source.matchAll(/from\s+['"](\.\.?\/[^'"]+\.js)['"]/g)) await importGraph(relative(root,resolve(dirname(absolute),match[1])).replaceAll('\\','/'),seen);
+  return seen;
+}
+const appGraph=await importGraph('js/app.js');
+for(const absolute of appGraph){ const ref=`./${relative(root,absolute).replaceAll('\\','/')}`; if(!shell.has(ref)) errors.push(`Service worker shell is missing required module: ${ref}`); }
+if(!/<title>UnWritten<\/title>/.test(html)) errors.push('Browser title must be exactly UnWritten.');
+try{
+  const manifest=JSON.parse(await readFile(join(root,'manifest.webmanifest'),'utf8'));
+  if(manifest.name!=='UnWritten'||manifest.short_name!=='UnWritten') errors.push('PWA name and short_name must be UnWritten.');
+  for(const icon of manifest.icons||[]){ try{ await stat(join(root,icon.src)); }catch{ errors.push(`Missing manifest icon: ${icon.src}`); } }
+  if(!(manifest.icons||[]).some(icon=>icon.sizes==='192x192')||!(manifest.icons||[]).some(icon=>icon.sizes==='512x512')) errors.push('PWA manifest must include 192x192 and 512x512 UnWritten icons.');
+}catch(error){ errors.push(`manifest.webmanifest is invalid JSON: ${error.message}`); }
 const ids=[...html.matchAll(/\sid=["']([^"']+)["']/g)].map(m=>m[1]);
 const duplicates=ids.filter((id,i)=>ids.indexOf(id)!==i);
 if(duplicates.length) errors.push(`Duplicate HTML ids: ${[...new Set(duplicates)].join(', ')}`);

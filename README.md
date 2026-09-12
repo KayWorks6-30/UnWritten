@@ -215,3 +215,12 @@ The ZIP remains the complete independent recovery artifact for both D1 records a
 - preview URLs: disabled
 
 The D1 UUID and bucket name in `wrangler.jsonc` are resource identifiers, not credentials.
+
+
+## V3.0.0 finalization notes
+
+- The browser/PWA application name is **UnWritten**. Repository/project documentation may still use the broader UnWritten.KayWorks identity.
+- The UnWritten application mark is the gold U/W sigil in `assets/`; it is used for the browser favicon, PWA/install icons, and sidebar brand.
+- Normal `/api/snapshot` responses exclude revision-history records; revisions are fetched per entity and are included explicitly when creating portable backups.
+- Restore replaces the structured D1 dataset in one transactional `DB.batch()` call. R2 files are still staged first and are cleaned up if the structured commit fails.
+- The V3 service-worker shell includes the full static JavaScript import graph required to boot the interface.

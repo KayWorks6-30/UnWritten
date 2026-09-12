@@ -71,6 +71,9 @@ export async function replaceDatabaseSnapshot(snapshot){
 export async function deleteMapVersionCascade(versionId){ await api(`/api/map-versions/${encodeURIComponent(versionId)}/cascade`,{method:'DELETE'}); invalidate(); }
 export async function deleteEntityCascade(entityId){ await api(`/api/entities/${encodeURIComponent(entityId)}/cascade`,{method:'DELETE'}); invalidate(); }
 
+export async function getEntityRevisions(entityId,{limit=50}={}){ const payload=await api(`/api/entities/${encodeURIComponent(entityId)}/revisions?limit=${encodeURIComponent(limit)}`); return Array.isArray(payload?.revisions)?payload.revisions:[]; }
+export async function getAllRevisions(){ const payload=await api('/api/revisions'); return Array.isArray(payload?.revisions)?payload.revisions:[]; }
+
 export async function initializeDefaults(){
   const project=await getOne('settings','project');
   if(!project){ await putOne('settings',{key:'project',value:{name:'UnWritten.KayWorks',currentBookId:null,schemaVersion:SCHEMA_VERSION}}); return; }

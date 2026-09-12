@@ -1,5 +1,5 @@
 import { APP_VERSION, SCHEMA_VERSION } from '../domain/schema.js';
-import { DATA_STORES, getAll, replaceDatabaseSnapshot } from './db.js';
+import { DATA_STORES, getAll, getAllRevisions, replaceDatabaseSnapshot } from './db.js';
 import { migrateBackupData } from './migrations.js';
 import { assertValidBackupSnapshot } from './validation.js';
 import { makeZip, readZip } from './zip.js';
@@ -12,6 +12,7 @@ async function portableToMedia(item){ if(!item.dataUrl) return item; const respo
 export async function buildBackup({includeMedia=true, portableMedia=true}={}) {
   const values=await Promise.all(DATA_STORES.map(getAll));
   const stores=Object.fromEntries(DATA_STORES.map((name,index)=>[name,values[index]]));
+  stores.workspace=[...stores.workspace,...await getAllRevisions()];
   stores.media = includeMedia ? (portableMedia ? await Promise.all(stores.media.map(mediaToPortable)) : stores.media) : [];
   return { format:'kayworks-world-bible-backup', appVersion:APP_VERSION, schemaVersion:SCHEMA_VERSION, exportedAt:new Date().toISOString(), ...stores };
 }

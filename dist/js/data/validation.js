@@ -130,12 +130,15 @@ export function validateBackupSnapshot(data) {
     if(reveal?.chapterId&&reveal?.bookId&&entityById.get(reveal.chapterId)?.fields?.parentBookId!==reveal.bookId) errors.push(`Reveal ${reveal.id}: chapter does not belong to selected book.`);
     if(reveal?.sceneId&&reveal?.chapterId&&entityById.get(reveal.sceneId)?.fields?.parentChapterId!==reveal.chapterId) errors.push(`Reveal ${reveal.id}: scene does not belong to selected chapter.`);
   }
+  const knowledgePoints=new Map();
   for(const knowledge of data.knowledge){
     if(!knowledge?.id||!entityIds.has(knowledge.subjectEntityId)) errors.push(`Knowledge ${knowledge?.id||'(missing id)'} has an invalid subject.`);
     if(knowledge?.knowerKind==='character'&&(!entityIds.has(knowledge.knowerEntityId)||entityById.get(knowledge.knowerEntityId)?.type!=='character')) errors.push(`Knowledge ${knowledge?.id||'(missing id)'} has an invalid character knower.`);
     if(!['character','reader'].includes(knowledge?.knowerKind)) errors.push(`Knowledge ${knowledge?.id||'(missing id)'} has invalid knowerKind.`);
     if(!KNOWLEDGE_STATES.includes(knowledge?.state)) errors.push(`Knowledge ${knowledge?.id||'(missing id)'} has invalid state.`);
     if(knowledge?.storyEntityId){ const t=entityById.get(knowledge.storyEntityId); if(!t||!['book','chapter','scene'].includes(t.type)) errors.push(`Knowledge ${knowledge.id}: story entry must be a Book, Chapter, or Scene.`); }
+    const pointKey=[knowledge?.subjectEntityId||'',knowledge?.knowerKind||'',knowledge?.knowerEntityId||'',knowledge?.storyEntityId||''].join('\u001f');
+    if(knowledgePoints.has(pointKey)) errors.push(`Knowledge ${knowledge?.id||'(missing id)'} duplicates the same subject, knower, and story point as ${knowledgePoints.get(pointKey)}.`); else knowledgePoints.set(pointKey,knowledge?.id||'(missing id)');
   }
   for(const version of data.mapVersions){
     if(!version?.id||!entityIds.has(version.mapId)||entityById.get(version.mapId)?.type!=='map') errors.push(`Map version ${version?.id||'(missing id)'} has an invalid map reference.`);

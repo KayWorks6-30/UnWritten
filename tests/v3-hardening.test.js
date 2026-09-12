@@ -116,7 +116,7 @@ test('Worker contains Access JWT validation, reviewer write guard, safe delete r
   assert.match(worker,/Reviewer access is read-only/i);
   assert.match(worker,/\['entities','mapVersions'\]\.includes\(store\)/);
   assert.match(worker,/This entry changed elsewhere\. Reload before overwriting\./);
-  assert.match(worker,/saveRevision\(/);
+  assert.match(worker,/revisionStatement\(/);
   assert.match(worker,/_trash\//);
 });
 

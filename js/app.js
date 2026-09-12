@@ -56,7 +56,6 @@ async function refreshState(){
   ]);
   Object.assign(state,{entities,relations,media,clues,reveals,knowledge,mapVersions,mapMarkers,workspace});
   state.settings=Object.fromEntries(settingRows.map(row=>[row.key,row.value]));
-  $('#project-name').textContent=projectSetting().name||'UnWritten.KayWorks';
 }
 
 async function refreshDrafts(){ try{ state.drafts=(await getDrafts()).sort((a,b)=>new Date(b.savedAt)-new Date(a.savedAt)); }catch{ state.drafts=[]; } }
@@ -114,6 +113,7 @@ function renderCollection(routeName,selectedId){
     <div class="entry-layout ${extraStory?'section':''}"><section class="card list-panel"><div class="filter-row"><input id="collection-search" type="search" placeholder="Filter this section…" />${typeOptions}<select id="collection-status"><option value="">All statuses</option>${statusSet.map(s=>`<option>${esc(s)}</option>`).join('')}</select><select id="collection-tag"><option value="">All tags</option>${tags.map(t=>`<option>${esc(t)}</option>`).join('')}</select></div><div id="collection-list" class="list"></div></section><section class="card detail-panel" id="detail-panel">${selected?renderEntryDetail(selected,routeName):emptyState('No entries yet','Create the first entry in this section to begin.')}</section></div>`;
   const update=()=>{ const q=$('#collection-search')?.value||'',type=$('#collection-type')?.value||'',status=$('#collection-status')?.value||'',tag=$('#collection-tag')?.value||''; const results=searchEntities(pool,q,{type:type||null,status:status||null,tag:tag||null}); $('#collection-list').innerHTML=results.length?results.map(e=>entryListItem(e,routeName)).join(''):emptyState('No matches','Try a different search or filter.'); };
   ['#collection-search','#collection-type','#collection-status','#collection-tag'].forEach(sel=>$(sel)?.addEventListener('input',update)); update();
+  if(selected) v3().loadEntryRevisions(selected.id);
 }
 
 function renderTrilogyOverview(){
@@ -317,7 +317,7 @@ function renderFamilyTree(rootId,filter=''){
 function renderArchive(){
   const archived=state.entities.filter(e=>e.archivedAt).sort((a,b)=>new Date(b.archivedAt)-new Date(a.archivedAt));
   main.innerHTML=pageHeader('Archive','Archived lore is retained for history, backups, and possible reuse. Permanent deletion is available only after archiving.','')+`<section class="card"><div class="list">${archived.length?archived.map(e=>entryListItem(e,'archive')).join(''):emptyState('Archive is empty','Archiving removes entries from normal working views without destroying them.')}</div></section>`;
-  if(route().selected){ const entity=entityById(route().selected); if(entity?.archivedAt) main.innerHTML+=`<section class="card section">${renderEntryDetail(entity,'archive')}</section>`; }
+  if(route().selected){ const entity=entityById(route().selected); if(entity?.archivedAt){ main.innerHTML+=`<section class="card section">${renderEntryDetail(entity,'archive')}</section>`; v3().loadEntryRevisions(entity.id); } }
 }
 
 function renderSettings(){

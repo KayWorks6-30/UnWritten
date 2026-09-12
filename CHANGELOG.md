@@ -1,3 +1,15 @@
+## 3.0.0 — RC1 finalization fixes
+
+- Made structured backup restore atomic by replacing the destructive multi-batch D1 restore with one transactional `DB.batch()` call.
+- Moved revision history out of the normal snapshot; entry revisions now load lazily, while explicit backups still include revision records.
+- Permanent entity deletion now purges that entity's revision snapshots.
+- Entity revision creation and the corresponding entity update now commit together in one D1 batch.
+- Knowledge records now reject ambiguous duplicates for the same subject, knower, and story point.
+- Updated the service-worker cache to V3, precached the V3 intelligence/UI modules, and added static-runtime caching for same-origin shell misses.
+- Changed the browser/PWA application name from `UnWritten.KayWorks` to `UnWritten` without overwriting editable project/story names.
+- Added the selected U/W sigil as the UnWritten favicon, Apple/PWA icon set, and sidebar application mark; the editable project/story name remains separate from the app identity.
+- Added release verification for the service-worker import graph and application title metadata.
+
 # Changelog
 
 ## V3.0.0 — Canon intelligence and author workspace consolidation

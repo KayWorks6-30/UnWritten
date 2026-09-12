@@ -68,15 +68,22 @@ function upsertStatement(env,store,r){
 }
 
 async function readStore(env,store){ const result=await env.DB.prepare(`SELECT * FROM ${TABLE[store]}`).all(); return (result.results||[]).map(row=>rowToRecord(store,row)); }
-async function snapshot(env){
+async function snapshot(env,{includeRevisions=false}={}){
   const started=Date.now();
-  const results=await env.DB.batch(DATA_STORES.map(store=>env.DB.prepare(`SELECT * FROM ${TABLE[store]}`)));
+  const statements=DATA_STORES.map(store=>env.DB.prepare(store==='workspace'&&!includeRevisions?`SELECT * FROM workspace WHERE kind <> 'revision'`:`SELECT * FROM ${TABLE[store]}`));
+  const results=await env.DB.batch(statements);
   const data=Object.fromEntries(DATA_STORES.map((store,i)=>[store,(results[i]?.results||[]).map(row=>rowToRecord(store,row))]));
   const rows=Object.values(data).reduce((n,arr)=>n+arr.length,0); const size=JSON.stringify(data).length;
-  console.log('snapshot',{ms:Date.now()-started,rows,bytes:size});
+  console.log('snapshot',{ms:Date.now()-started,rows,bytes:size,includeRevisions});
   return data;
 }
-async function batchStatements(env,statements,size=75){ for(let i=0;i<statements.length;i+=size) await env.DB.batch(statements.slice(i,i+size)); }
+async function batchStatements(env,statements){ if(statements.length) await env.DB.batch(statements); }
+async function readEntityRevisions(env,entityId,limit=50){
+  const capped=Math.max(1,Math.min(100,Number(limit)||50));
+  const result=await env.DB.prepare("SELECT * FROM workspace WHERE kind='revision' AND json_extract(data_json,'$.entityId')=? ORDER BY created_at DESC LIMIT ?").bind(entityId,capped).all();
+  return (result.results||[]).map(row=>rowToRecord('workspace',row));
+}
+async function readAllRevisions(env){ const result=await env.DB.prepare("SELECT * FROM workspace WHERE kind='revision' ORDER BY created_at DESC").all(); return (result.results||[]).map(row=>rowToRecord('workspace',row)); }
 async function oneEntity(env,id){ const row=await env.DB.prepare('SELECT * FROM entities WHERE id=?').bind(id).first(); return rowToRecord('entities',row); }
 async function rowExists(env,table,idColumn,id){ return Boolean(await env.DB.prepare(`SELECT 1 AS ok FROM ${table} WHERE ${idColumn}=? LIMIT 1`).bind(id).first()); }
 async function requireEntity(env,id,types=null,label='Referenced entry'){
@@ -121,7 +128,13 @@ async function validateRecord(env,store,r){
     if(!r?.id) throw new Error('Reveal id is required.'); if(r.mysteryId) await requireEntity(env,r.mysteryId,'mystery','Mystery'); if(r.targetEntityId) await requireEntity(env,r.targetEntityId); const book=r.bookId?await requireEntity(env,r.bookId,'book','Book'):null; const chapter=r.chapterId?await requireEntity(env,r.chapterId,'chapter','Chapter'):null; const scene=r.sceneId?await requireEntity(env,r.sceneId,'scene','Scene'):null;
     if(book&&chapter&&chapter.fields?.parentBookId!==book.id) throw new Error('Selected chapter does not belong to selected book.'); if(chapter&&scene&&scene.fields?.parentChapterId!==chapter.id) throw new Error('Selected scene does not belong to selected chapter.'); return;
   }
-  if(store==='knowledge'){ if(!r?.id||!KNOWLEDGE_STATES.includes(r.state)||!['reader','character'].includes(r.knowerKind)) throw new Error('Knowledge record is invalid.'); await requireEntity(env,r.subjectEntityId); if(r.knowerKind==='character') await requireEntity(env,r.knowerEntityId,'character','Character knower'); if(r.storyEntityId) await requireEntity(env,r.storyEntityId,['book','chapter','scene'],'Story entry'); return; }
+  if(store==='knowledge'){
+    if(!r?.id||!KNOWLEDGE_STATES.includes(r.state)||!['reader','character'].includes(r.knowerKind)) throw new Error('Knowledge record is invalid.');
+    await requireEntity(env,r.subjectEntityId); if(r.knowerKind==='character') await requireEntity(env,r.knowerEntityId,'character','Character knower'); if(r.storyEntityId) await requireEntity(env,r.storyEntityId,['book','chapter','scene'],'Story entry');
+    const duplicate=await env.DB.prepare("SELECT id FROM knowledge WHERE subject_entity_id=? AND knower_kind=? AND COALESCE(knower_entity_id,'')=? AND COALESCE(story_entity_id,'')=? AND id<>? LIMIT 1").bind(r.subjectEntityId,r.knowerKind,r.knowerEntityId||'',r.storyEntityId||'',r.id).first();
+    if(duplicate) throw new Error('A knowledge state already exists for this subject, knower, and story point. Edit that record instead.');
+    return;
+  }
   if(store==='mapVersions'){ if(!r?.id) throw new Error('Map version id is required.'); await requireEntity(env,r.mapId,'map','Map'); if(!await rowExists(env,'media','id',r.mediaId)) throw new Error('Map image media does not exist.'); if(r.variant&&!MAP_VARIANTS.includes(r.variant)) throw new Error('Map variant is invalid.'); return; }
   if(store==='mapMarkers'){
     if(!r?.id||!Number.isFinite(Number(r.x))||Number(r.x)<0||Number(r.x)>100||!Number.isFinite(Number(r.y))||Number(r.y)<0||Number(r.y)>100) throw new Error('Map marker coordinates are invalid.');
@@ -170,9 +183,9 @@ async function deleteMapVersionCascade(env,id){
   await batchStatements(env,stmts); if(deleteKey) await moveR2ToTrash(env,deleteKey);
 }
 
-function referencesEntityInWorkspace(item,id){ const d=item.data||{}; if(item.kind==='revision') return false; return [d.targetId,d.sceneId,d.linkedEntityId,d.entityId,d.characterId,d.bookId,d.chapterId,d.linkedEntityId,d.pointId].includes(id); }
+function referencesEntityInWorkspace(item,id){ const d=item.data||{}; if(item.kind==='revision') return d.entityId===id; return [d.targetId,d.sceneId,d.linkedEntityId,d.entityId,d.characterId,d.bookId,d.chapterId,d.linkedEntityId,d.pointId].includes(id); }
 async function deleteEntityCascade(env,id){
-  const data=await snapshot(env),target=data.entities.find(e=>e.id===id); if(!target) return;
+  const data=await snapshot(env,{includeRevisions:true}),target=data.entities.find(e=>e.id===id); if(!target) return;
   const blocking=data.entities.filter(e=>!e.archivedAt&&e.id!==id&&(e.fields?.parentLocationId===id||e.fields?.parentBookId===id||e.fields?.parentChapterId===id)); if(blocking.length) throw new Error(`Cannot permanently delete this entry while ${blocking.length} active child ${blocking.length===1?'entry references':'entries reference'} it.`);
   const changed=[]; for(const e of data.entities){ if(e.id===id) continue; const fields={...(e.fields||{})}; let dirty=false; for(const k of ['eraId','storyEntityId','scopeLocationId','parentMapId','locationId','parentLocationId','parentBookId','parentChapterId']) if(fields[k]===id){fields[k]='';dirty=true;} if(dirty) changed.push({...e,fields,updatedAt:now()}); }
   const removedVersions=data.mapVersions.filter(v=>v.mapId===id),candidateMediaIds=new Set(removedVersions.map(v=>v.mediaId));
@@ -192,22 +205,32 @@ async function deleteMapMarker(env,id){
 
 async function prepareRestore(request,env){ const raw=await request.json(),migrated=migrateBackupData(raw); assertValidBackupSnapshot(manifestForValidation(migrated)); const restoreId=crypto.randomUUID(),manifest={...migrated,media:(migrated.media||[]).map(({blob,dataUrl,url,r2Key,...m})=>m)}; await env.MEDIA.put(`_restore/${restoreId}/manifest.json`,JSON.stringify(manifest),{httpMetadata:{contentType:'application/json'}}); return json({ok:true,restoreId,mediaIds:manifest.media.map(m=>m.id)}); }
 async function uploadRestoreMedia(request,env,restoreId,mediaId){ const manifestObj=await env.MEDIA.get(`_restore/${restoreId}/manifest.json`); if(!manifestObj) return error('Restore session not found.',404); const manifest=JSON.parse(await manifestObj.text()),meta=manifest.media.find(m=>m.id===mediaId); if(!meta) return error('Media is not part of this restore.',404); const bytes=await request.arrayBuffer(); if(!bytes.byteLength) return error('Restore media file is empty.',400); await env.MEDIA.put(`_restore/${restoreId}/media/${cleanPathPart(mediaId)}`,bytes,{httpMetadata:{contentType:meta.mime||request.headers.get('content-type')||'application/octet-stream'}}); return json({ok:true}); }
+export async function replaceStructuredSnapshot(env,manifest,finalized){
+  const stmts=[];
+  for(const store of DATA_STORES) stmts.push(env.DB.prepare(`DELETE FROM ${TABLE[store]}`));
+  for(const store of DATA_STORES){ const records=store==='media'?finalized:(manifest[store]||[]); for(const record of records) stmts.push(upsertStatement(env,store,record)); }
+  // One D1 batch is one transaction. Do not chunk destructive restore writes across independent batches.
+  await env.DB.batch(stmts);
+}
+
 async function commitRestore(env,restoreId){
   const manifestKey=`_restore/${restoreId}/manifest.json`,manifestObj=await env.MEDIA.get(manifestKey); if(!manifestObj) throw new Error('Restore session not found.'); const manifest=migrateBackupData(JSON.parse(await manifestObj.text())); assertValidBackupSnapshot(manifestForValidation(manifest)); const oldMedia=await readStore(env,'media'),finalized=[],newKeys=[];
   try{ for(const meta of manifest.media){ const staged=await env.MEDIA.get(`_restore/${restoreId}/media/${cleanPathPart(meta.id)}`); if(!staged) throw new Error(`Restore media ${meta.name||meta.id} was not uploaded.`); const key=mediaObjectKey(meta.id,meta.name); await env.MEDIA.put(key,staged.body,{httpMetadata:{contentType:meta.mime||'application/octet-stream'},customMetadata:{mediaId:meta.id}}); newKeys.push(key); finalized.push({...meta,r2Key:key}); }
-    const stmts=[]; for(const store of DATA_STORES) stmts.push(env.DB.prepare(`DELETE FROM ${TABLE[store]}`)); for(const store of DATA_STORES){const records=store==='media'?finalized:(manifest[store]||[]);for(const record of records)stmts.push(upsertStatement(env,store,record));} await batchStatements(env,stmts);
+    await replaceStructuredSnapshot(env,manifest,finalized);
   }catch(e){ if(newKeys.length) await env.MEDIA.delete(newKeys).catch(()=>{}); throw e; }
   for(const old of oldMedia) if(old.r2Key) await moveR2ToTrash(env,old.r2Key); const cleanup=[manifestKey,...manifest.media.map(m=>`_restore/${restoreId}/media/${cleanPathPart(m.id)}`)]; try{await env.MEDIA.delete(cleanup);}catch(e){console.warn('Could not fully clean restore staging objects',e);} return json({ok:true,counts:Object.fromEntries(DATA_STORES.map(s=>[s,(s==='media'?finalized:manifest[s]||[]).length]))});
 }
 
-async function saveRevision(env,existing,identity){ if(!existing) return; const record={id:crypto.randomUUID(),kind:'revision',title:`${existing.name} — ${existing.updatedAt}`,data:{entityId:existing.id,snapshot:existing,changedBy:identity?.email||null},createdAt:now(),updatedAt:now()}; await env.DB.batch([upsertStatement(env,'workspace',record)]); }
+function revisionStatement(env,existing,identity){ if(!existing) return null; const record={id:crypto.randomUUID(),kind:'revision',title:`${existing.name} — ${existing.updatedAt}`,data:{entityId:existing.id,snapshot:existing,changedBy:identity?.email||null},createdAt:now(),updatedAt:now()}; return upsertStatement(env,'workspace',record); }
 
-async function handleApi(request,env,identity){
+export async function handleApi(request,env,identity){
   const url=new URL(request.url),path=url.pathname,method=request.method.toUpperCase();
   if(path==='/api/health'&&method==='GET'){
-    try{ const table=await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entities'").first(); if(!table) return json({ok:false,ready:false,error:'D1 migrations have not been applied.'},503); const counts=await env.DB.batch([env.DB.prepare('SELECT COUNT(*) AS n FROM entities'),env.DB.prepare('SELECT COUNT(*) AS n FROM media'),env.DB.prepare('SELECT COUNT(*) AS n FROM workspace')]); return json({ok:true,ready:true,app:'UnWritten.KayWorks',version:'3.0.0',storage:'Cloudflare D1 + private R2',entities:Number(counts[0]?.results?.[0]?.n||0),media:Number(counts[1]?.results?.[0]?.n||0),workspace:Number(counts[2]?.results?.[0]?.n||0),accessEmail:identity.email,role:identity.role}); }catch(e){ return error(`Storage is not ready: ${e.message}`,503); }
+    try{ const table=await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entities'").first(); if(!table) return json({ok:false,ready:false,error:'D1 migrations have not been applied.'},503); const counts=await env.DB.batch([env.DB.prepare('SELECT COUNT(*) AS n FROM entities'),env.DB.prepare('SELECT COUNT(*) AS n FROM media'),env.DB.prepare('SELECT COUNT(*) AS n FROM workspace')]); return json({ok:true,ready:true,app:'UnWritten',version:'3.0.0',storage:'Cloudflare D1 + private R2',entities:Number(counts[0]?.results?.[0]?.n||0),media:Number(counts[1]?.results?.[0]?.n||0),workspace:Number(counts[2]?.results?.[0]?.n||0),accessEmail:identity.email,role:identity.role}); }catch(e){ return error(`Storage is not ready: ${e.message}`,503); }
   }
   if(path==='/api/snapshot'&&method==='GET') return json({ok:true,...await snapshot(env)});
+  const revisionRoute=path.match(/^\/api\/entities\/([^/]+)\/revisions$/); if(revisionRoute&&method==='GET') return json({ok:true,revisions:await readEntityRevisions(env,decodeURIComponent(revisionRoute[1]),url.searchParams.get('limit')||50)});
+  if(path==='/api/revisions'&&method==='GET') return json({ok:true,revisions:await readAllRevisions(env)});
   if(method!=='GET'&&method!=='HEAD') requireOwner(identity);
   if(path==='/api/restore/prepare'&&method==='POST') return prepareRestore(request,env);
   const restoreMedia=path.match(/^\/api\/restore\/([^/]+)\/media\/([^/]+)$/); if(restoreMedia&&method==='PUT') return uploadRestoreMedia(request,env,decodeURIComponent(restoreMedia[1]),decodeURIComponent(restoreMedia[2]));
@@ -220,7 +243,10 @@ async function handleApi(request,env,identity){
     const store=decodeURIComponent(storeRoute[1]),key=decodeURIComponent(storeRoute[2]); if(!DATA_STORES.includes(store)||store==='media') return error('Unsupported store.',404);
     if(method==='PUT'){
       const record=await request.json(),expected=store==='settings'?record.key:record.id; if(expected!==key) return error('Record key mismatch.',400); await validateRecord(env,store,record);
-      if(store==='entities'){ const existing=await oneEntity(env,key),base=request.headers.get('x-base-updated-at'); if(existing&&base&&existing.updatedAt!==base) return error('This entry changed elsewhere. Reload before overwriting.',409,{currentUpdatedAt:existing.updatedAt}); if(existing) await saveRevision(env,existing,identity); }
+      if(store==='entities'){
+        const existing=await oneEntity(env,key),base=request.headers.get('x-base-updated-at'); if(existing&&base&&existing.updatedAt!==base) return error('This entry changed elsewhere. Reload before overwriting.',409,{currentUpdatedAt:existing.updatedAt});
+        const revision=revisionStatement(env,existing,identity); await env.DB.batch(revision?[revision,upsertStatement(env,store,record)]:[upsertStatement(env,store,record)]); return json({ok:true});
+      }
       await env.DB.batch([upsertStatement(env,store,record)]); return json({ok:true});
     }
     if(method==='DELETE'){
