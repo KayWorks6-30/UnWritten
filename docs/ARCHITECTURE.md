@@ -1,10 +1,10 @@
-# Architecture — V1.0.0
+# Architecture — V1.1.0
 
 ## Product boundary
 
 Galatea World Bible is a static, local-first private author workspace. The deployed files are application code only. Canon, manuscript planning, maps, media, relationship records, and knowledge state live in the browser's IndexedDB database for the current origin.
 
-The application remains vanilla HTML/CSS/JavaScript. No frontend framework, remote database, auth stack, analytics service, or sync service is required for the V1 workflow.
+The application remains vanilla HTML/CSS/JavaScript. No frontend framework, remote database, auth stack, analytics service, or sync service is required for the current workflow.
 
 ## Persistence boundary
 
@@ -44,57 +44,50 @@ Entity
 - updatedAt
 ```
 
-Fields are optional. Incomplete lore remains valid.
+Fields remain optional so incomplete lore is valid.
 
-V1 adds `map` as a normal entity type so maps can participate in search, canon state, tags, media links, notes, and structured relationships.
+Existing entity `type` is immutable in the normal editor after creation. This protects type-specific fields and generated structural relationships from becoming hidden stale data. Idea → Entry remains the explicit conversion workflow.
 
-## Stable structured hierarchy
+## Stable hierarchy and referential integrity
 
-Hierarchy helpers store IDs, not copied names:
+Structured IDs include:
 
 - Location `parentLocationId` → Location
 - Chapter `parentBookId` → Book
 - Scene `parentChapterId` → Chapter
-- Event `eraId` → Era
+- Event / Map `eraId` → Era
+- Map `scopeLocationId` → Location
+- Map `parentMapId` → Map
 
-Location, Chapter, and Scene parent saves also maintain generated structured relationships for natural reverse navigation.
+Location, Chapter, and Scene parent saves also maintain generated relationships for reverse navigation.
 
-Legacy V0.1 free-text fields remain readable and are not silently deleted.
+Permanent deletion is deliberately conservative:
+
+- active hierarchical children block deletion of their parent
+- optional embedded references are cleared when the target is permanently deleted
+- dedicated subrecords/relationships are cascaded
+- project current-book selection is cleared if its Book is deleted
+
+Archived parent IDs remain visible in existing selectors as archived values rather than silently becoming `None`.
 
 ## Knowledge distinction
 
-V1 uses two complementary mechanisms:
+The app uses two complementary mechanisms:
 
 1. Lore-entry knowledge layers (`Author Truth`, `Modern Scholarship`, `Common Belief`, etc.) for broad narrative/world context.
 2. `knowledge` records for explicit subject + knower + state + story-point tracking.
 
-A knowledge record can say a Character knows the truth, knows part, believes something false, is unaware, or is intentionally unknown. Reader state uses the same model without pretending reader knowledge is objective world truth.
+Reader/character belief does not become objective truth merely because it is recorded.
 
 ## Mystery/reveal model
 
-Mysteries remain normal entities containing their actual answer and high-level planning notes.
+Mysteries are normal entities containing the actual answer and high-level planning notes. Detailed clues and reveals are first-class records linked by stable IDs to story locations and lore targets.
 
-Detailed clue progression is stored separately:
-
-```text
-Clue
-- mysteryId
-- kind
-- label / description
-- storyEntityId (Chapter or Scene)
-- visibility
-- intended first-read interpretation
-- true interpretation
-- order
-```
-
-Reader reveals are separate records with optional Mystery/target lore plus Book, Chapter, and Scene IDs. This lets one reveal affect multiple systems without copying chapter names into prose.
-
-The Reveal Board derives a chronological view from these records and Foreshadowing entities.
+The Reveal Board is derived from those records and Foreshadowing entities rather than storing a second manually synchronized timeline.
 
 ## Timeline model
 
-Historical event prose and sorting are intentionally separate:
+Historical event prose and sorting remain intentionally separate:
 
 ```text
 fields.dateText         human-facing wording
@@ -105,72 +98,102 @@ fields.eraId            structured Era link
 fields.timelineOrder    optional manual override
 ```
 
-This preserves dates like “traditional date” or “approximately 3,000 years before present” while still allowing deterministic ordering.
+## Visual Atlas
 
-## Maps
+A Map is an Entity, not just an uploaded file.
 
-A Map is an Entity. Each image revision is a `mapVersions` record pointing to one reusable `media` record. Each marker references:
+```text
+Map Entity
+- scopeLocationId   Location represented by the image
+- parentMapId       broader/overview map
+- mapKind
+- eraId
+- description
+- coverage note
 
-- one map-version ID
-- one stable Location ID
-- X/Y percentage coordinates
+Map Version
+- mapId
+- mediaId
+- label
+- variant
+- effectiveDate
+- notes
 
-Therefore changing a map image, label, border interpretation, or historical period does not duplicate or rewrite Location lore.
+Map Marker
+- mapVersionId
+- locationId
+- x/y percentage coordinates
+```
+
+This supports an atlas such as:
+
+```text
+Galatea World Map
+  → Northern Continent Map
+      → Kingdom of X Map
+          → Capital City Map
+```
+
+A marker always targets the canonical Location ID. If that Location has a scoped child/detail Map, the visual marker drills into that Map. Otherwise it opens the Location entry.
+
+Image versions are separate from Map identity so historical/political/physical revisions do not duplicate geography. Map media cannot be deleted underneath a live Map Version.
+
+## Backup / restore boundary
+
+Restore is treated as untrusted input even for a private application.
+
+The pipeline is:
+
+```text
+parse
+→ reject unsupported future schema
+→ deterministic migration of supported older schema
+→ structural + cross-record validation
+→ fully decode/verify media
+→ validate again
+→ one IndexedDB transaction across every store
+→ commit all stores or preserve the old database
+```
+
+`js/data/validation.js` validates IDs, entity types/statuses, relationship types/endpoints, hierarchy references, settings, media links, clues/reveals, knowledge records, map versions, and map-marker coordinates.
+
+ZIP restore verifies every referenced media member exists and checks ZIP CRC32 before database replacement.
 
 ## Graphs
 
-Graphs are derived views, not databases:
+Relationship, family, and knowledge graphs remain derived views rather than independent data sources.
 
-- Relationship Graph derives from `relations`
-- Family Tree derives from `parent_of` / `child_of`
-- Knowledge Graph derives from `knowledge`
+## Media lifecycle
 
-This prevents the visual layer from becoming a second source of truth.
+Media object URLs are UI-session resources, not persistence. Cached object URLs are revoked whenever persisted media state is refreshed.
 
-## Archive semantics
+Map Version deletion removes its markers and only deletes the underlying media blob when that blob is not still reused elsewhere.
 
-Normal deletion is two-stage:
-
-1. Archive: set `archivedAt`; hide from normal working/search views.
-2. Permanent delete: only exposed after archive and explicitly confirmed.
-
-Cascade deletion removes affected structured relations/subrecords and detaches media references. Contradicted lore can simply remain active with status `Contradicted`; it does not need to be archived.
-
-## Migration
-
-Database version upgrades create missing V1 stores without replacing existing stores. Existing entities are normalized deterministically to add fields such as `archivedAt` and timeline uncertainty defaults.
-
-V0.1 JSON backups are accepted and migrated to the current logical schema with all new collections defaulting to empty.
-
-No migration changes record IDs.
-
-## Backup and portability
+## Backup formats
 
 ### JSON
 
-Full portable JSON contains all stores. Media blobs are encoded as data URLs for one-file portability.
+All stores are exported. Media blobs are encoded as data URLs for one-file portability.
 
 ### ZIP
-
-ZIP backup uses a standards-compliant store-only ZIP archive:
 
 ```text
 manifest.json
 media/<media-id>.<extension>
 ```
 
-The manifest contains structured database records and media metadata. Binary media remains binary instead of being base64-expanded.
+Media remains binary and CRC-checked on restore.
 
 ### Markdown
 
-Markdown export resolves structural entity IDs back to readable names and includes entry fields, relationships, clues/reveals, and knowledge records. It is an author-readable escape hatch, not a lossless database replacement.
+Human-readable export resolves stable IDs to names. It is an escape hatch/reference format, not a lossless database replacement.
 
 ## Privacy
 
-The application still has no remote content database. `noindex` metadata discourages indexing of the shell but does not constitute access control. Private deployment should use a hosting-layer policy such as Cloudflare Access.
+There is still no remote content database. `noindex` discourages indexing of the static shell but is not access control. A hosted private deployment should use hosting-layer protection such as Cloudflare Access.
 
-Origin separation remains intentional: two hostnames do not share IndexedDB. Use backup/restore to move the world database.
+Origin separation remains intentional: different hostnames do not share IndexedDB. Use backups when moving the authoritative workspace.
 
 ## Cross-device sync decision
 
-Encrypted cross-device sync was deliberately not implemented because the roadmap makes it conditional on actual need. Adding sync safely would introduce authentication, remote authorization, encryption/key recovery, synchronization conflict semantics, and operational responsibilities. Until that problem exists, keeping it out preserves the project's privacy and simplicity.
+Encrypted sync remains deliberately out of scope until real usage proves a need. Adding it safely would require a separate threat model for authentication, remote authorization, encryption/key recovery, offline conflicts, and operational backups.

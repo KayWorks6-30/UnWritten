@@ -1,66 +1,68 @@
-# Roadmap Status — V1.0.0
+# Roadmap Status — V1.1.0
 
-The original V0.1 future roadmap is complete through the local/offline feature set.
+The original predetermined local/offline roadmap is complete. V1.1 additionally closes the reliability findings from the first V1 review and upgrades Maps into a practical visual atlas.
 
 ## Foundation — complete
 
 - IndexedDB local database
 - typed lore/story/planning entries
-- canon status model
-- author/in-world/reader knowledge layers
-- structured relationships
+- canon / question / idea state models
+- author/in-world/reader knowledge distinctions
+- structured relationships and hierarchy IDs
 - global and section search
 - media reuse
-- JSON backup/restore
 - responsive desktop/mobile application shell
 
-## Authoring Workflow — complete
+## Authoring workflow — complete
 
 - Idea → Entry conversion
-- structured Parent Location picker
-- Book → Chapter and Chapter → Scene parent helpers
-- mystery clue subrecords linked to chapters/scenes
-- dedicated Trilogy Overview working view
-- reader-reveal records with Book/Chapter/Scene links
-- separate recent-created/recent-edited Dashboard sections
+- structured Location, Book, Chapter hierarchy helpers
+- mystery clues and reader reveals
+- Trilogy Overview
 - soft archive before permanent deletion
+- archived-parent preservation
+- entry-type locking after creation
 
-## Timeline & Maps — complete
+## Timeline / atlas — complete
 
-- display date + sortable start/end + uncertainty model
-- era bands and era/certainty filters
-- Map records
-- map image version/history
-- marker placement against stable Location IDs
-- political/physical/historical/exploration/ancient/current variants
+- uncertain historical dates and era bands
+- map entities with image-version history
+- Map Geographic Scope → Location
+- Parent / Overview Map hierarchy
+- world/continent/kingdom/city-style atlas drilldown
+- location pins with automatic detailed-map navigation
+- location → map creation workflow
+- image fit/zoom controls
+- safe map-version/media lifecycle
 
-## Visualization & Portability — complete
+## Visualization / portability — complete
 
-- character/reader knowledge records and graph
-- family tree visualization
+- character/reader knowledge graph
+- family tree
 - relationship graph
-- reveal/foreshadowing visualization
+- reveal/foreshadowing board
+- JSON backup/restore
 - ZIP backup/restore
 - Markdown export
+
+## Recovery integrity — complete for the current local model
+
+- supported-schema migration only
+- future-schema rejection
+- cross-record validation
+- fully decoded media before writes
+- atomic multi-store database replacement
+- missing/corrupt ZIP member rejection
+- referential-integrity handling for permanent deletion
+- regression coverage for validation and ZIP integrity
+- optional real-browser IndexedDB integration harness
 
 ## Conditional future work — not currently justified
 
 ### Encrypted cross-device sync
 
-Only consider this if maintaining a single authoritative browser/origin becomes a real constraint.
+Only consider this if maintaining a single authoritative browser/origin becomes a real constraint. A safe implementation would require authentication/authorization, remote-storage threat modeling, end-to-end encryption and key recovery, conflict handling, offline sync semantics, and operational backups.
 
-A safe implementation would require a new architecture phase covering:
+## Future changes should now be usage-driven
 
-- authentication and authorization
-- remote storage threat model
-- end-to-end encryption/key management
-- conflict detection/resolution
-- offline-first synchronization semantics
-- recovery when a key/device is lost
-- private deployment and operational backup
-
-Do not add a server simply to mark the roadmap as larger. V1.0.0 is considered the completed local-first product baseline.
-
-## Future improvements should be usage-driven
-
-After real authoring use, prioritize observed friction rather than predetermined feature expansion. Reasonable examples could include stronger full-text indexing at very large scale, editor keyboard shortcuts, bulk edits, richer Markdown packages, graph filtering, or map drawing tools—but only when the actual workflow demonstrates a need.
+Do not invent another large architecture roadmap simply because V1.1 exists. Use the application on the real novel and respond to proven friction. Plausible future improvements include polygon/region hotspots on maps, editor keyboard shortcuts, bulk edits, richer Markdown packages, map drawing/annotation tools, or stronger full-text indexing at very large scale—but only after actual usage shows they would help.

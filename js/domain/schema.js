@@ -1,5 +1,5 @@
-export const APP_VERSION = '1.0.0';
-export const SCHEMA_VERSION = 4;
+export const APP_VERSION = '1.1.0';
+export const SCHEMA_VERSION = 5;
 
 export const DATE_UNCERTAINTY = ['Exact','Approximate','Range','Traditional','Disputed','Unknown'];
 export const KNOWLEDGE_STATES = ['Knows truth','Partial truth','Incorrect belief','Unaware','Unknown'];
@@ -210,9 +210,11 @@ export const ENTRY_TYPES = {
     label: 'Map', group: 'Geography', icon: '▧',
     fields: [
       { key: 'mapKind', label: 'Map Variant', type: 'select', options: MAP_VARIANTS },
+      { key: 'scopeLocationId', label: 'Geographic Scope', type: 'entity', entityTypes: ['location'] },
+      { key: 'parentMapId', label: 'Parent / Overview Map', type: 'entity', entityTypes: ['map'] },
       { key: 'eraId', label: 'Era / Age', type: 'entity', entityTypes: ['era'] },
       { key: 'description', label: 'Map Description', type: 'textarea' },
-      { key: 'coverage', label: 'Coverage / Region', type: 'text' }
+      { key: 'coverage', label: 'Coverage / Region Note', type: 'text' }
     ]
   },
   trilogy: {

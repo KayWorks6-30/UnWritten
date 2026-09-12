@@ -1,12 +1,12 @@
-# Galatea World Bible — V1.0.0
+# Galatea World Bible — V1.1.0
 
-A private, local-first author workspace for worldbuilding, story planning, maps, mysteries, history, knowledge tracking, and long-term canon management.
+A private, local-first author workspace for worldbuilding, story planning, visual maps, mysteries, history, knowledge tracking, and long-term canon management.
 
-V1.0 completes the original local roadmap through authoring workflows, timeline/maps, graph views, and portable export. It intentionally does **not** add remote sync: the roadmap made encrypted cross-device sync conditional on the single-device workflow becoming insufficient, and this release remains static/browser-first.
+V1.1 keeps the existing static/browser-first architecture and focuses on two things: **data-recovery integrity** and a much more useful **visual atlas workflow**. It intentionally does not add a backend, accounts, or cloud sync.
 
 ## Core workspace
 
-- Dashboard with separate recently-created/recently-edited lists, favorites, current book, questions, mysteries, and fast idea capture
+- Dashboard with recently-created/recently-edited lists, favorites, current book, questions, mysteries, and fast idea capture
 - Typed lore entries for world lore, gods/ancient beings, locations, maps, historical events, eras, civilizations/cultures, religions, characters, creatures, organizations, artifacts, languages, trilogy overview, books, chapters, scenes, mysteries, foreshadowing, questions, and ideas
 - Canon status tracking: Canon, Provisional, Concept, Contradicted, Shelved, Unknown
 - Separate Author Truth, Modern Scholarship, Common Belief, Cultural Interpretations, and Reader Knowledge layers where relevant
@@ -14,64 +14,79 @@ V1.0 completes the original local roadmap through authoring workflows, timeline/
 - Reusable local media library
 - Soft archive before permanent deletion
 
-## Authoring workflows completed in V1
+## Visual Atlas
 
-- Idea Inbox → structured entry conversion without copy/paste; source idea is retained and marked Converted
-- Structured Location → Parent Location selector with generated `located_in` relationship
-- Structured Chapter → Book and Scene → Chapter selectors
-- Dedicated Trilogy Overview card/view
-- Mystery clue subrecords tied directly to chapters/scenes
-- Reader reveal records with Book / Chapter / Scene links
-- Dedicated Reveal & Foreshadowing Board ordered by story position
-- Character and Reader Knowledge records with truth/partial/incorrect/unaware states
+Maps are structured entries backed by real image files stored locally in IndexedDB.
 
-## Timeline
+A Map can now define:
 
-Historical events support:
+- **Geographic Scope** — the Location the map actually depicts, such as Galatea, a continent, kingdom, province, or city
+- **Parent / Overview Map** — the broader map this one drills down from
+- multiple image versions for political, physical, historical, exploration, ancient, current, or other views
+- location pins stored against stable Location IDs
+- child/detail maps
 
-- written display date
-- sortable numeric start/end range
-- Exact / Approximate / Range / Traditional / Disputed / Unknown certainty
-- structured Era link
-- era-band timeline display and filtering
-- optional manual sort override for edge cases
+### Typical workflow
 
-The sortable values exist only for organization. They do not replace the author's historical wording.
+1. Create the geographic Location hierarchy, for example `Galatea → Continent → Kingdom → City`.
+2. Open a Location and choose **Map this location**, or create a Map from the Maps page.
+3. Set its Geographic Scope. For a kingdom map, select that Kingdom Location.
+4. Optionally set a Parent / Overview Map, such as the world or continent map.
+5. Choose **Upload map image** and select your existing PNG/JPG/WebP/etc.
+6. Place pins for Locations visible on that map.
+7. If a pinned Location has its own scoped Map, clicking that pin drills directly into the detailed map. Otherwise it opens the Location lore page.
+8. Use **Fit / − / +** to navigate large map images.
 
-## Maps
+This means you can keep a complete world map while also maintaining detailed maps for specific kingdoms, cities, ruins, historical borders, or any other area without duplicating the underlying geography records.
 
-Maps are now structured lore records instead of loose images.
+The app does not generate map artwork. You provide the map image; Galatea stores, versions, links, and navigates it.
 
-Each map can have:
+## Data integrity and recovery
 
-- multiple image versions
-- variant type such as Political, Physical, Historical, Exploration, Ancient, or Current
-- version label/date/notes
-- location markers stored against stable Location IDs
+V1.1 hardens backup/restore substantially:
 
-Select a Location, arm marker placement, then click the image. Replacing or adding a map image version does not rewrite the Location record.
+- restore migrates only explicitly supported older schemas
+- backups from a newer unsupported schema are rejected rather than silently downgraded
+- entities, statuses, relationships, hierarchy references, knowledge records, map records, media, markers, and settings are validated before restore
+- media is fully decoded before the database is touched
+- restore replaces all IndexedDB stores in **one multi-store transaction**
+- failed restore leaves the previous database intact
+- ZIP restore rejects missing media members
+- ZIP entries are CRC-checked for corruption
+- media used by a Map Version cannot be deleted directly from the Media page
+- Map Versions have an explicit delete workflow that also removes their markers
+- permanent deletion blocks active hierarchical children instead of leaving dangling parent IDs
+- optional references to permanently deleted entries are cleared deterministically
 
-Legacy V0.1 media tagged `#map` remains preserved in Media and can be organized into map records manually.
+Restore remains replace-only by design. Export a safety backup before restoring another file.
 
-## Graphs
+## Editing safeguards
 
-- two-depth relationship graph from any structured entry
-- family-tree visualization derived from `parent_of` / `child_of` relationship records
-- subject-centered knowledge graph showing character/reader knowledge states
+- Existing entry types are locked after creation so changing `Location → Character`, for example, cannot leave hidden stale type-specific fields or generated relationships.
+- New unsaved entries can still change type; switching type clears unsaved type-specific fields.
+- Archived parents remain visible in existing parent selectors as `— Archived`, preventing accidental relationship loss when editing a child.
+- Cached media object URLs are revoked whenever media state refreshes.
+- Primary entry lists and global search results are native buttons; graph nodes expose keyboard focus/activation.
 
-These visualizations are derived from normal records; they are not separate sources of truth.
+## Timeline, story, mysteries, and graphs
 
-## Backups and portability
+V1 retains the completed V1.0 systems:
 
-Settings & Data supports:
+- uncertain historical dates with sortable start/end values and era bands
+- Book → Chapter → Scene hierarchy
+- Idea Inbox → structured entry conversion
+- clue/reveal tracking tied to story positions
+- character/reader knowledge records
+- relationship, family-tree, and knowledge visualizations
+- JSON, ZIP, and Markdown export
 
-- full JSON backup / restore
-- full ZIP backup / restore with media as separate binary files
-- Markdown export for human-readable/offline reference
+## Storage and privacy
 
-Restore is replace-only by design. This avoids ambiguous record merging. Export a safety backup first.
+All lore and images live in the browser's IndexedDB database for this site/origin. There is no remote lore database.
 
-V0.1 JSON backups are migrated deterministically when restored/opened; new stores default to empty and existing entry IDs are preserved.
+Clearing site data, losing the browser profile/device, or changing origins can remove access to that local history. Keep ZIP backups somewhere outside the browser.
+
+If the static shell is hosted online, use something such as Cloudflare Access when you also want the site itself hidden behind authentication. `noindex` is not authentication.
 
 ## Run locally
 
@@ -79,40 +94,26 @@ V0.1 JSON backups are migrated deterministically when restored/opened; new store
 npm run serve
 ```
 
-Then open `http://localhost:8080`.
+Then open the shown localhost address.
 
-Browser modules and IndexedDB require an HTTP(S) origin; `file://` is not the supported workflow.
-
-## Tests
+## Tests and release checks
 
 ```bash
 npm test
+npm run build
+npm run verify
 ```
 
-The suite covers schema/status invariants, search, relationships, timeline sorting, story hierarchy, family/relationship graph semantics, V0.1 migration behavior, ZIP round trips, and Markdown export.
+`npm run verify` runs the Node regression suite, builds the deploy folder, checks asset/import references, scans duplicate HTML IDs, and performs a basic committed-secret scan.
 
-## Build deployment files
+A real browser IndexedDB recovery harness is also included:
 
 ```bash
-npm run build
+npm run test:browser
 ```
 
-This creates `dist/` containing only the static app files required for deployment.
+It requires Chromium/Chrome on `PATH` (or `CHROME_BIN`). The harness tests IndexedDB → JSON backup → replace → restore, media recovery, future-schema rejection, and multi-store transaction rollback.
 
-## Privacy model
+## Deployment
 
-There is no remote lore database and no application account. World data and uploaded media remain in this browser's IndexedDB for the exact site origin until you deliberately export them.
-
-For a deployed private author workspace, put the hostname behind a host-level access layer such as Cloudflare Access. `noindex` metadata prevents ordinary indexing but is not authentication.
-
-Different hostnames/subdomains have separate browser storage. Use a backup to move data between origins.
-
-## Deliberately not included
-
-- remote/cloud synchronization
-- multi-user collaboration
-- server database
-- AI-generated lore
-- automatic conflict resolution between devices
-
-Encrypted cross-device sync remains a future option only if the local-first workflow stops being sufficient. Adding it would require authentication, server-side authorization, encryption/key recovery design, and a real synchronization/conflict model rather than treating sync as a small add-on.
+This remains a static app. Deploy the contents of `dist/` (or the provided deploy ZIP) to the chosen static origin.

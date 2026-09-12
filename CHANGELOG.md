@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.1.0 — Recovery hardening and visual atlas
+
+### Visual atlas
+- Added Geographic Scope to Map records so maps can represent the whole world or a specific continent, kingdom, city, ruin, or other Location.
+- Added Parent / Overview Map links for explicit world → region → local-map drilldown.
+- Added atlas thumbnails and hierarchy breadcrumbs.
+- Map pins now open a detailed scoped map when one exists, otherwise the canonical Location entry.
+- Added Location → “Map this location” workflow with sensible scope/parent defaults.
+- Added Fit / zoom controls for large visual maps.
+- Added child-map cards under overview maps.
+- Renamed map-version action to the clearer “Upload map image”.
+- Added explicit Map Version deletion with marker cleanup.
+- Prevented Media deletion while a Map Version still depends on that image.
+
+### Backup / restore reliability
+- Added cross-store backup validation for entities, statuses, relationships, hierarchy IDs, settings, media, clues, reveals, knowledge, maps, and markers.
+- Restore now decodes and validates everything before touching IndexedDB.
+- Restore now replaces every store in one atomic multi-store transaction.
+- Rejects backups created by unsupported future schemas instead of silently downgrading them.
+- ZIP restore now rejects missing media files.
+- ZIP reader now verifies CRC32 values and rejects corrupted members.
+- Added deterministic normalization for legacy media arrays during migration.
+
+### Referential integrity
+- Permanent deletion now blocks active Location/Book/Chapter children rather than creating dangling hierarchy references.
+- Optional embedded references are cleared when their target is permanently deleted.
+- Project current-book selection is cleared if that Book is permanently deleted.
+- Map media deletion preserves blobs that are still reused elsewhere.
+- Archived parent values remain selectable on existing child records.
+- Existing entry types are locked after creation to prevent hidden stale fields/relationships.
+- Switching type on a new unsaved entry clears its unsaved type-specific fields.
+
+### UX / accessibility
+- Fixed Dashboard open-question count so the statistic is no longer capped by the five-item preview.
+- Replaced primary clickable entry/search-result divs with native buttons.
+- Added keyboard focus/activation to relationship/family graph nodes.
+- Revoke cached media object URLs during state refresh.
+- Status badge CSS classes are now selected from a fixed allowlist rather than derived from imported text.
+
+### Tests / release engineering
+- Expanded Node regression coverage from 17 to 25 tests.
+- Added validation, future-schema, map-reference, relation-type, and ZIP corruption tests.
+- Added a real-browser IndexedDB round-trip/rollback test harness for environments with Chromium/Chrome.
+- Added `npm run verify` for tests, build, asset/import checks, duplicate-ID checks, and a basic secret scan.
+- Updated service-worker cache for V1.1 and the new validation module.
+
 ## 1.0.0 — Roadmap-complete local author workspace
 
 ### Authoring workflow
