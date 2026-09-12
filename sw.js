@@ -1,4 +1,5 @@
 const CACHE = 'unwritten-v3.0.1';
+// Sidebar-only hotfix: changing this worker forces the cached app shell, including styles.css, to refresh.
 const SHELL = [
   './', './index.html', './styles.css', './manifest.webmanifest', './assets/favicon.ico', './assets/unwritten-icon-32.png', './assets/unwritten-icon-180.png', './assets/unwritten-icon-192.png', './assets/unwritten-icon-512.png',
   './js/app.js',
