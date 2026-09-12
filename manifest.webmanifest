@@ -1,0 +1,9 @@
+{
+  "name": "World Bible",
+  "short_name": "World Bible",
+  "start_url": "./index.html#/dashboard",
+  "display": "standalone",
+  "background_color": "#0f1014",
+  "theme_color": "#111217",
+  "description": "Private local-first author workspace and worldbuilding database."
+}
