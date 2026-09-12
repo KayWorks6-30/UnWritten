@@ -1,30 +1,32 @@
-# Architecture — V0.1.0
+# Architecture — V1.0.0
 
-## 1. Proposed architecture
+## Product boundary
 
-V0.1 is a static browser application using vanilla HTML, CSS, and JavaScript. It uses IndexedDB behind a dedicated persistence module instead of scattering raw browser-storage calls through the UI.
+Galatea World Bible is a static, local-first private author workspace. The deployed files are application code only. Canon, manuscript planning, maps, media, relationship records, and knowledge state live in the browser's IndexedDB database for the current origin.
 
-Why IndexedDB is justified here:
+The application remains vanilla HTML/CSS/JavaScript. No frontend framework, remote database, auth stack, analytics service, or sync service is required for the V1 workflow.
 
-- the project is explicitly expected to grow to thousands of records
-- image/map/concept-art blobs are part of the core use case
-- localStorage's small synchronous string store is a poor fit for that payload
-- the application can still remain local-first, static-hostable, and backend-free
+## Persistence boundary
 
-The main layers are:
+`js/data/db.js` is the authoritative browser persistence boundary.
 
-- `js/data/` — IndexedDB persistence and portable backups
-- `js/domain/` — entry schemas, search, relationship semantics
-- `js/app.js` — routing, rendering, editing, and interaction orchestration
-- `styles.css` — shared responsive application UI
+IndexedDB stores:
 
-This is intentionally smaller than a framework application. The model is structured enough to grow, but there is no frontend framework, server database, auth stack, or state library in V0.1.
+- `entities` — durable typed lore/story/planning records
+- `relations` — structured links between entry IDs
+- `media` — reusable image blobs and metadata
+- `settings` — project preferences
+- `clues` — mystery clue/red-herring/evidence subrecords
+- `reveals` — explicit reader reveal records
+- `knowledge` — character/reader knowledge states
+- `mapVersions` — version/history metadata tying a Map entry to one media record
+- `mapMarkers` — location coordinates tied to one map-version ID
 
-## 2. Data model
+UI code does not own a second canonical copy of these records.
 
-### Entity
+## Entity model
 
-Most author data uses one durable entity envelope:
+The durable entity envelope remains:
 
 ```text
 Entity
@@ -35,319 +37,140 @@ Entity
 - status
 - tags[]
 - favorite
+- archivedAt
 - fields{}
 - notes
 - createdAt
 - updatedAt
 ```
 
-`type` selects a schema describing optional fields. Empty fields are valid. This preserves the ability to sketch incomplete lore without satisfying a giant required form.
+Fields are optional. Incomplete lore remains valid.
 
-Supported V0.1 types:
+V1 adds `map` as a normal entity type so maps can participate in search, canon state, tags, media links, notes, and structured relationships.
 
-- lore
-- ancient being / god
-- location
-- historical event
-- era / age
-- civilization / culture
-- religion / mythology
-- character
-- creature
-- organization / faction
-- artifact / object
-- language
-- book
-- chapter
-- scene
-- mystery / reveal
-- foreshadowing
-- unresolved question
-- idea inbox item
+## Stable structured hierarchy
 
-### Knowledge layers
+Hierarchy helpers store IDs, not copied names:
 
-Relevant lore schemas include separate fields for:
+- Location `parentLocationId` → Location
+- Chapter `parentBookId` → Book
+- Scene `parentChapterId` → Chapter
+- Event `eraId` → Era
 
-- Author Truth
-- Modern Scholarship
-- Common Belief
-- Cultural Interpretations
-- Reader Knowledge / Reveal Notes
+Location, Chapter, and Scene parent saves also maintain generated structured relationships for natural reverse navigation.
 
-These are not collapsed into one description because disagreement and partial knowledge are core story mechanics.
+Legacy V0.1 free-text fields remain readable and are not silently deleted.
 
-Character-specific knowledge and false beliefs are also first-class character fields.
+## Knowledge distinction
 
-### Relationship
+V1 uses two complementary mechanisms:
 
-Cross-linking is stored separately:
+1. Lore-entry knowledge layers (`Author Truth`, `Modern Scholarship`, `Common Belief`, etc.) for broad narrative/world context.
+2. `knowledge` records for explicit subject + knower + state + story-point tracking.
+
+A knowledge record can say a Character knows the truth, knows part, believes something false, is unaware, or is intentionally unknown. Reader state uses the same model without pretending reader knowledge is objective world truth.
+
+## Mystery/reveal model
+
+Mysteries remain normal entities containing their actual answer and high-level planning notes.
+
+Detailed clue progression is stored separately:
 
 ```text
-Relationship
-- id
-- fromId
-- toId
-- type
-- note
-- createdAt
+Clue
+- mysteryId
+- kind
+- label / description
+- storyEntityId (Chapter or Scene)
+- visibility
+- intended first-read interpretation
+- true interpretation
+- order
 ```
 
-This avoids copying names into many records and gives future graphs, family trees, mystery clue visualizations, and map markers stable IDs to target.
+Reader reveals are separate records with optional Mystery/target lore plus Book, Chapter, and Scene IDs. This lets one reveal affect multiple systems without copying chapter names into prose.
 
-Examples include:
+The Reveal Board derives a chronological view from these records and Foreshadowing entities.
 
-- parent_of
-- friend_of
-- member_of
-- located_in
-- participated_in
-- created_by
-- appears_in
-- introduced_in
-- clue_in
-- revealed_in
-- contradicts
-- supports
+## Timeline model
 
-### Media
+Historical event prose and sorting are intentionally separate:
 
 ```text
-Media
-- id
-- name
-- title
-- mime
-- size
-- blob
-- tags[]
-- entityIds[]
-- createdAt
+fields.dateText         human-facing wording
+fields.dateStart        optional sortable numeric start
+fields.dateEnd          optional sortable numeric end
+fields.dateUncertainty  Exact / Approximate / Range / Traditional / Disputed / Unknown
+fields.eraId            structured Era link
+fields.timelineOrder    optional manual override
 ```
 
-A single media record can be linked to multiple entries. Images are not duplicated just because they appear on several lore pages.
+This preserves dates like “traditional date” or “approximately 3,000 years before present” while still allowing deterministic ordering.
 
-### Settings
+## Maps
 
-V0.1 settings include the project name and current-book ID. Future preferences can be added without changing entity records.
+A Map is an Entity. Each image revision is a `mapVersions` record pointing to one reusable `media` record. Each marker references:
 
-## 3. Major page structure
+- one map-version ID
+- one stable Location ID
+- X/Y percentage coordinates
 
-### Dashboard
+Therefore changing a map image, label, border interpretation, or historical period does not duplicate or rewrite Location lore.
 
-Useful working surface rather than decoration:
+## Graphs
 
-- total/canon/open-question/mystery counts
-- quick idea capture
-- current book
-- recently edited
-- favorites
-- unresolved questions
-- important mysteries
-- recent ideas
+Graphs are derived views, not databases:
 
-### All Lore
+- Relationship Graph derives from `relations`
+- Family Tree derives from `parent_of` / `child_of`
+- Knowledge Graph derives from `knowledge`
 
-Global structured-entry index with search, type, status, and tag filters.
+This prevents the visual layer from becoming a second source of truth.
 
-### World
+## Archive semantics
 
-Focused index for broad lore, ancient beings, civilizations, religions, creatures, organizations, artifacts, and languages.
+Normal deletion is two-stage:
 
-### Characters
+1. Archive: set `archivedAt`; hide from normal working/search views.
+2. Permanent delete: only exposed after archive and explicitly confirmed.
 
-Character-only profiles and relationships.
+Cascade deletion removes affected structured relations/subrecords and detaches media references. Contradicted lore can simply remain active with status `Contradicted`; it does not need to be archived.
 
-### Geography
+## Migration
 
-Location hierarchy records. V0.1 can store parent-location text and, more importantly, structured `located_in`/`belongs_to` relationships.
+Database version upgrades create missing V1 stores without replacing existing stores. Existing entities are normalized deterministically to add fields such as `archivedAt` and timeline uncertainty defaults.
 
-### Maps
+V0.1 JSON backups are accepted and migrated to the current logical schema with all new collections defaulting to empty.
 
-V0.1 map library using ordinary media tagged `map`, alongside the location index. This deliberately establishes stable location IDs before interactive markers are added.
+No migration changes record IDs.
 
-### History / Timeline
+## Backup and portability
 
-Events and eras are editable in History. Timeline renders historical events in a dedicated chronological view. Written dates can remain uncertain (`Approximately 3,000 years before present`, `Traditional date`, etc.). An optional numeric sort field exists only for display ordering.
+### JSON
 
-### Story
+Full portable JSON contains all stores. Media blobs are encoded as data URLs for one-file portability.
 
-Books, chapters, and scenes remain separate from objective world lore.
+### ZIP
 
-### Mysteries & Foreshadowing
-
-Dedicated mystery/reveal and foreshadowing records. Structured relationships can point them at chapters/scenes using link types such as `introduced_in`, `clue_in`, `revealed_in`, and `foreshadows`.
-
-### Media
-
-Searchable expansion point for maps, drawings, concept art, diagrams, family trees, and reference material.
-
-### Idea Inbox / Questions
-
-Fast, intentionally low-friction capture surfaces that do not force premature categorization.
-
-### Settings & Data
-
-Project identity, current book selection, database summary, backup, and restore.
-
-## 4. V1 scope
-
-The V0.1 implementation establishes the V1 foundation requested by the product prompt:
-
-1. Dashboard
-2. Lore entries and categories
-3. Canon statuses
-4. Cross-linking
-5. Global/section search
-6. Characters
-7. Locations
-8. History and master timeline
-9. Story: books/chapters/scenes
-10. Mystery tracker and foreshadowing records
-11. Idea inbox
-12. Image attachments/media reuse
-13. Full backup/restore
-14. Basic map-image section
-
-Further V1 iterations should deepen these workflows before adding large visualization systems.
-
-## 5. Deferred features
-
-Deferred intentionally:
-
-- interactive maps and marker editing
-- relationship graph visualization
-- family-tree visualization
-- sophisticated timeline visualization
-- detailed per-character knowledge graph
-- automatic reader-reveal visualization
-- Markdown export
-- partial/merge import
-- cross-device sync
-- remote authentication
-- collaborative editing
-- AI lore parsing/suggestion layer
-
-The current IDs and relationship model are designed so these do not require rebuilding the core database.
-
-## 6. Storage and backup
-
-IndexedDB stores entities, relationships, settings, and binary media locally.
-
-Full export creates a human-readable JSON structure. Media blobs are converted to portable data URLs for backup and reconstructed as blobs on restore.
-
-Tradeoff: full JSON backups can become large. A later release can add a ZIP-based backup package with separate `/media` files while keeping the same logical export schema.
-
-## 7. Privacy/authentication approach
-
-V0.1 does not need an author login because it has no remote content database. The hosted files are only the empty application shell; unpublished lore remains in the browser.
-
-The HTML explicitly asks search engines not to index the app shell via `robots` metadata. For an actually private hosted URL, deployment should additionally use a private access layer at the host (for example an access policy) if the author does not want the empty shell reachable by others.
-
-If future sync stores manuscript/lore data remotely, the privacy model changes immediately. That version must introduce authentication, access control, transport security, server-side authorization, and encrypted backup/recovery discipline before remote data storage ships.
-
-## 8. Architectural risks
-
-### Origin-bound local data
-
-IndexedDB is tied to the exact site origin. Dev/prod/subdomain changes do not share data automatically. Backups are the migration path.
-
-### Browser storage is not archival storage
-
-Local persistence can be cleared. The UI therefore makes backup/export a core feature rather than an afterthought.
-
-### Media backup growth
-
-Base64/data-URL encoding makes portable JSON larger than the original binary media. Later use a ZIP bundle.
-
-### Linear search
-
-V0.1 scans the local entity set. That is easy to reason about and likely fine early. If the corpus reaches a size where search latency is visible, add a derived full-text index rather than changing canonical records.
-
-### Flexible typed fields
-
-A generic entity envelope is useful, but uncontrolled schema churn can create messy data. New field definitions should be versioned and migrations should be deterministic once real content accumulates.
-
-### Relationship semantics
-
-Some relation types are directional and some are effectively symmetric. V0.1 displays direction but does not automatically create inverse relationship records. A later domain layer can formalize inverse semantics (`parent_of ↔ child_of`, etc.) without changing IDs.
-
-## 9. Folder structure
+ZIP backup uses a standards-compliant store-only ZIP archive:
 
 ```text
-Galatea-World-Bible-v0.1.0/
-├── index.html
-├── styles.css
-├── manifest.webmanifest
-├── sw.js
-├── package.json
-├── README.md
-├── CHANGELOG.md
-├── js/
-│   ├── app.js
-│   ├── data/
-│   │   ├── db.js
-│   │   └── backup.js
-│   └── domain/
-│       ├── schema.js
-│       ├── search.js
-│       └── relations.js
-├── docs/
-│   ├── ARCHITECTURE.md
-│   └── ROADMAP.md
-└── tests/
-    ├── schema.test.js
-    ├── search.test.js
-    └── relations.test.js
+manifest.json
+media/<media-id>.<extension>
 ```
 
-## 10. Staged implementation plan
+The manifest contains structured database records and media metadata. Binary media remains binary instead of being base64-expanded.
 
-### Stage 1 — Foundation (implemented in V0.1)
+### Markdown
 
-- persistence boundary
-- typed entry schemas
-- canon statuses
-- CRUD editor
-- search/filtering
-- structured relationships
-- dashboard
-- major section routing
-- local media
-- backup/restore
+Markdown export resolves structural entity IDs back to readable names and includes entry fields, relationships, clues/reveals, and knowledge records. It is an author-readable escape hatch, not a lossless database replacement.
 
-### Stage 2 — Authoring depth
+## Privacy
 
-- dedicated trilogy overview
-- explicit chapter → scene hierarchy
-- richer mystery clue records instead of some freeform text
-- reader-knowledge reveal records tied to chapter/scene IDs
-- convert Idea → real entry workflow
-- better location parent picker
-- media search/tag filtering
-- soft archive/history for destructive edits
+The application still has no remote content database. `noindex` metadata discourages indexing of the shell but does not constitute access control. Private deployment should use a hosting-layer policy such as Cloudflare Access.
 
-### Stage 3 — Historical/geographic tooling
+Origin separation remains intentional: two hostnames do not share IndexedDB. Use backup/restore to move the world database.
 
-- era-aware timeline lanes
-- event date-range model with uncertainty metadata
-- map records separate from media records
-- interactive markers targeting location IDs
-- historical border/map variants
+## Cross-device sync decision
 
-### Stage 4 — Knowledge and relationships
-
-- inverse relationship semantics
-- character knowledge claims
-- claim truth-state (`true`, `false`, `partial`, `unknown`)
-- family tree visualization
-- relationship graph
-- reader reveal timeline
-
-### Stage 5 — Portability and scale
-
-- ZIP backup with separate media files
-- Markdown export
-- selective export by category/book
-- full-text search index if needed
-- optional encrypted remote sync only if cross-device use becomes worth the added security/auth complexity
+Encrypted cross-device sync was deliberately not implemented because the roadmap makes it conditional on actual need. Adding sync safely would introduce authentication, remote authorization, encryption/key recovery, synchronization conflict semantics, and operational responsibilities. Until that problem exists, keeping it out preserves the project's privacy and simplicity.

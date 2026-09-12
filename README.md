@@ -1,27 +1,79 @@
-# Galatea World Bible — V0.1.0
+# Galatea World Bible — V1.0.0
 
-A private, local-first author workspace for worldbuilding, story planning, mysteries, history, and long-term canon management.
+A private, local-first author workspace for worldbuilding, story planning, maps, mysteries, history, knowledge tracking, and long-term canon management.
 
-## What this version includes
+V1.0 completes the original local roadmap through authoring workflows, timeline/maps, graph views, and portable export. It intentionally does **not** add remote sync: the roadmap made encrypted cross-device sync conditional on the single-device workflow becoming insufficient, and this release remains static/browser-first.
 
-- Dashboard with recent entries, favorites, current book, unresolved questions, mysteries, and quick idea capture
-- Typed lore entries for world lore, ancient beings, locations, events, eras, civilizations/cultures, religions, characters, creatures, organizations, artifacts, languages, trilogy overview, books, chapters, scenes, mysteries, foreshadowing, questions, and ideas
+## Core workspace
+
+- Dashboard with separate recently-created/recently-edited lists, favorites, current book, questions, mysteries, and fast idea capture
+- Typed lore entries for world lore, gods/ancient beings, locations, maps, historical events, eras, civilizations/cultures, religions, characters, creatures, organizations, artifacts, languages, trilogy overview, books, chapters, scenes, mysteries, foreshadowing, questions, and ideas
 - Canon status tracking: Canon, Provisional, Concept, Contradicted, Shelved, Unknown
-- Separate knowledge layers for Author Truth, Modern Scholarship, Common Belief, Cultural Interpretations, and Reader Knowledge / Reveal Notes where relevant
-- Structured cross-links between entries
-- Global search plus section filters
-- Searchable media gallery
-- Master timeline with uncertain written dates and an optional manual sort key
-- Reusable image/media library; one image can be linked to multiple entries
-- Simple image-based Maps section
-- Full JSON backup/restore including media
-- Local IndexedDB persistence
-- Offline application-shell caching through a service worker when served over HTTP/HTTPS
-- `noindex`/`nofollow` metadata
+- Separate Author Truth, Modern Scholarship, Common Belief, Cultural Interpretations, and Reader Knowledge layers where relevant
+- Structured entry relationships and global search
+- Reusable local media library
+- Soft archive before permanent deletion
+
+## Authoring workflows completed in V1
+
+- Idea Inbox → structured entry conversion without copy/paste; source idea is retained and marked Converted
+- Structured Location → Parent Location selector with generated `located_in` relationship
+- Structured Chapter → Book and Scene → Chapter selectors
+- Dedicated Trilogy Overview card/view
+- Mystery clue subrecords tied directly to chapters/scenes
+- Reader reveal records with Book / Chapter / Scene links
+- Dedicated Reveal & Foreshadowing Board ordered by story position
+- Character and Reader Knowledge records with truth/partial/incorrect/unaware states
+
+## Timeline
+
+Historical events support:
+
+- written display date
+- sortable numeric start/end range
+- Exact / Approximate / Range / Traditional / Disputed / Unknown certainty
+- structured Era link
+- era-band timeline display and filtering
+- optional manual sort override for edge cases
+
+The sortable values exist only for organization. They do not replace the author's historical wording.
+
+## Maps
+
+Maps are now structured lore records instead of loose images.
+
+Each map can have:
+
+- multiple image versions
+- variant type such as Political, Physical, Historical, Exploration, Ancient, or Current
+- version label/date/notes
+- location markers stored against stable Location IDs
+
+Select a Location, arm marker placement, then click the image. Replacing or adding a map image version does not rewrite the Location record.
+
+Legacy V0.1 media tagged `#map` remains preserved in Media and can be organized into map records manually.
+
+## Graphs
+
+- two-depth relationship graph from any structured entry
+- family-tree visualization derived from `parent_of` / `child_of` relationship records
+- subject-centered knowledge graph showing character/reader knowledge states
+
+These visualizations are derived from normal records; they are not separate sources of truth.
+
+## Backups and portability
+
+Settings & Data supports:
+
+- full JSON backup / restore
+- full ZIP backup / restore with media as separate binary files
+- Markdown export for human-readable/offline reference
+
+Restore is replace-only by design. This avoids ambiguous record merging. Export a safety backup first.
+
+V0.1 JSON backups are migrated deterministically when restored/opened; new stores default to empty and existing entry IDs are preserved.
 
 ## Run locally
-
-Use any static HTTP server. From this folder:
 
 ```bash
 npm run serve
@@ -29,24 +81,7 @@ npm run serve
 
 Then open `http://localhost:8080`.
 
-The app uses browser modules and IndexedDB, so opening `index.html` directly with `file://` is not the supported workflow.
-
-## Privacy model
-
-V0.1 has no backend and no author account. Lore entries and uploaded images are stored in this browser's IndexedDB database for the current site origin. Hosting the static app does not upload the author's world database.
-
-That also means browser storage is not a backup. Clearing site data, losing the device/profile, or moving to a different origin can make the local database unavailable. Export full JSON backups regularly.
-
-## Backup behavior
-
-`Settings & Data → Export full JSON backup` includes:
-
-- entries
-- structured relationships
-- project settings
-- media encoded into the JSON backup
-
-Restore is replace-only in V0.1. This avoids unsafe or ambiguous record merges while the schema is still young.
+Browser modules and IndexedDB require an HTTP(S) origin; `file://` is not the supported workflow.
 
 ## Tests
 
@@ -54,20 +89,30 @@ Restore is replace-only in V0.1. This avoids unsafe or ambiguous record merges w
 npm test
 ```
 
-The current suite protects schema validity, search behavior, canon/question status rules, and relationship invariants.
+The suite covers schema/status invariants, search, relationships, timeline sorting, story hierarchy, family/relationship graph semantics, V0.1 migration behavior, ZIP round trips, and Markdown export.
 
-## Important V0.1 limitations
-
-- Search is intentionally linear over local records. That is simple and sufficient for early development; a dedicated full-text index can be added later without changing entry IDs.
-- Media inside JSON backups increases file size because binary files are encoded for portability.
-- Interactive map markers, family trees, relationship graphs, rich character-knowledge graphs, Markdown export, and visual reveal timelines are deferred.
-- There is no cloud sync or multi-device merge.
-- Authentication is intentionally absent because the content database never leaves the browser in this version. If remote sync is added later, authentication becomes mandatory.
-
-## Build a deploy folder
+## Build deployment files
 
 ```bash
 npm run build
 ```
 
-This creates `dist/`, which contains only the static application files needed for deployment.
+This creates `dist/` containing only the static app files required for deployment.
+
+## Privacy model
+
+There is no remote lore database and no application account. World data and uploaded media remain in this browser's IndexedDB for the exact site origin until you deliberately export them.
+
+For a deployed private author workspace, put the hostname behind a host-level access layer such as Cloudflare Access. `noindex` metadata prevents ordinary indexing but is not authentication.
+
+Different hostnames/subdomains have separate browser storage. Use a backup to move data between origins.
+
+## Deliberately not included
+
+- remote/cloud synchronization
+- multi-user collaboration
+- server database
+- AI-generated lore
+- automatic conflict resolution between devices
+
+Encrypted cross-device sync remains a future option only if the local-first workflow stops being sufficient. Adding it would require authentication, server-side authorization, encryption/key recovery design, and a real synchronization/conflict model rather than treating sync as a small add-on.
