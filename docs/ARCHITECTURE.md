@@ -1,199 +1,163 @@
-# Architecture — V1.1.0
+# Architecture — V2.0.0
 
-## Product boundary
+## Purpose
 
-Galatea World Bible is a static, local-first private author workspace. The deployed files are application code only. Canon, manuscript planning, maps, media, relationship records, and knowledge state live in the browser's IndexedDB database for the current origin.
+UnWritten.KayWorks is a private single-author worldbuilding and story-planning workspace. V2 deliberately introduces a backend because the project is expected to contain years of irreplaceable writing and media, and the author has chosen a private Cloudflare-hosted deployment protected by Access.
 
-The application remains vanilla HTML/CSS/JavaScript. No frontend framework, remote database, auth stack, analytics service, or sync service is required for the current workflow.
+This is not a generic multi-user SaaS architecture.
 
 ## Persistence boundary
 
-`js/data/db.js` is the authoritative browser persistence boundary.
+### Authoritative
 
-IndexedDB stores:
+- **D1**: structured canon/story data
+- **R2**: image/map/media binaries
 
-- `entities` — durable typed lore/story/planning records
-- `relations` — structured links between entry IDs
-- `media` — reusable image blobs and metadata
-- `settings` — project preferences
-- `clues` — mystery clue/red-herring/evidence subrecords
-- `reveals` — explicit reader reveal records
-- `knowledge` — character/reader knowledge states
-- `mapVersions` — version/history metadata tying a Map entry to one media record
-- `mapMarkers` — location coordinates tied to one map-version ID
+### Local only
 
-UI code does not own a second canonical copy of these records.
+- **IndexedDB draft cache**: unsaved editor recovery
+- **legacy V1 IndexedDB**: read-only migration source when detected
+- Service Worker Cache Storage: application shell only, never API data
 
-## Entity model
+The UI does not manipulate D1 or R2 directly. `js/data/db.js` is the browser persistence boundary and speaks only to same-origin `/api/*` routes.
 
-The durable entity envelope remains:
+## Cloudflare resources
 
 ```text
-Entity
-- id
-- type
-- name
-- summary
-- status
-- tags[]
-- favorite
-- archivedAt
-- fields{}
-- notes
-- createdAt
-- updatedAt
+Worker: unwritten
+Custom Domain: unwritten.kayworks.dev
+D1 binding: DB → unwritten
+R2 binding: MEDIA → unwritten
+workers.dev: disabled
+preview URLs: disabled
 ```
 
-Fields remain optional so incomplete lore is valid.
+The production hostname must remain protected by Cloudflare Access.
 
-Existing entity `type` is immutable in the normal editor after creation. This protects type-specific fields and generated structural relationships from becoming hidden stale data. Idea → Entry remains the explicit conversion workflow.
+## D1 tables
 
-## Stable hierarchy and referential integrity
+V2 uses explicit tables for the existing domain stores:
 
-Structured IDs include:
+- `entities`
+- `relations`
+- `settings`
+- `media`
+- `clues`
+- `reveals`
+- `knowledge`
+- `map_versions`
+- `map_markers`
 
-- Location `parentLocationId` → Location
-- Chapter `parentBookId` → Book
-- Scene `parentChapterId` → Chapter
-- Event / Map `eraId` → Era
-- Map `scopeLocationId` → Location
-- Map `parentMapId` → Map
+Flexible type-specific entry fields stay JSON in `entities.fields_json`. Tags and similar flexible arrays are also stored as JSON. This preserves the useful V1 entity envelope without creating dozens of narrow tables.
 
-Location, Chapter, and Scene parent saves also maintain generated relationships for reverse navigation.
+## R2 model
 
-Permanent deletion is deliberately conservative:
+R2 stores only binary media. D1's `media` table stores metadata and the private `r2_key`.
 
-- active hierarchical children block deletion of their parent
-- optional embedded references are cleared when the target is permanently deleted
-- dedicated subrecords/relationships are cascaded
-- project current-book selection is cleared if its Book is deleted
+R2 has no public custom domain and does not require S3 credentials for this application. The Worker uses the `MEDIA` binding.
 
-Archived parent IDs remain visible in existing selectors as archived values rather than silently becoming `None`.
-
-## Knowledge distinction
-
-The app uses two complementary mechanisms:
-
-1. Lore-entry knowledge layers (`Author Truth`, `Modern Scholarship`, `Common Belief`, etc.) for broad narrative/world context.
-2. `knowledge` records for explicit subject + knower + state + story-point tracking.
-
-Reader/character belief does not become objective truth merely because it is recorded.
-
-## Mystery/reveal model
-
-Mysteries are normal entities containing the actual answer and high-level planning notes. Detailed clues and reveals are first-class records linked by stable IDs to story locations and lore targets.
-
-The Reveal Board is derived from those records and Foreshadowing entities rather than storing a second manually synchronized timeline.
-
-## Timeline model
-
-Historical event prose and sorting remain intentionally separate:
+The browser requests a protected same-origin URL:
 
 ```text
-fields.dateText         human-facing wording
-fields.dateStart        optional sortable numeric start
-fields.dateEnd          optional sortable numeric end
-fields.dateUncertainty  Exact / Approximate / Range / Traditional / Disputed / Unknown
-fields.eraId            structured Era link
-fields.timelineOrder    optional manual override
+/api/media/:id/content
 ```
 
-## Visual Atlas
+The Worker looks up the private R2 key in D1 and streams the object.
 
-A Map is an Entity, not just an uploaded file.
+## API
+
+Primary routes:
+
+- `GET /api/health`
+- `GET /api/snapshot`
+- `PUT/DELETE /api/store/:store/:key`
+- `PUT/DELETE /api/media/:id`
+- `GET /api/media/:id/content`
+- `DELETE /api/entities/:id/cascade`
+- `DELETE /api/map-versions/:id/cascade`
+- staged restore routes under `/api/restore/*`
+
+The API is same-origin and intended to sit behind Cloudflare Access.
+
+## Data loading
+
+The V1 UI expected a local `getAll(store)` API. V2 keeps that interface but implements it using a shared in-flight `/api/snapshot` request. A UI refresh that asks for all nine stores therefore does not issue nine remote database requests.
+
+Any successful mutation invalidates the browser-side snapshot cache.
+
+## Mutation validation
+
+The Worker validates authoritative writes, including:
+
+- entry schema/type/status
+- relationship type and endpoints
+- hierarchy references
+- story references
+- mystery/clue links
+- knowledge subject/character references
+- map/media/location references
+- marker coordinates
+- current-book references
+
+Backup restores receive full cross-store validation before commit.
+
+## Restore transaction model
+
+D1 `batch()` is used as the transactional structured-data boundary.
+
+R2 and D1 cannot share one distributed ACID transaction, so V2 uses staged object keys:
 
 ```text
-Map Entity
-- scopeLocationId   Location represented by the image
-- parentMapId       broader/overview map
-- mapKind
-- eraId
-- description
-- coverage note
-
-Map Version
-- mapId
-- mediaId
-- label
-- variant
-- effectiveDate
-- notes
-
-Map Marker
-- mapVersionId
-- locationId
-- x/y percentage coordinates
+validate manifest
+→ stage restore media under _restore/<session>/...
+→ confirm every media file exists
+→ copy each to a new immutable-ish final key
+→ transactional D1 replace points metadata at those new keys
+→ delete old R2 media
+→ delete temporary restore objects
 ```
 
-This supports an atlas such as:
+If D1 commit fails, new final R2 keys are deleted and the previous D1 snapshot remains authoritative.
 
-```text
-Galatea World Map
-  → Northern Continent Map
-      → Kingdom of X Map
-          → Capital City Map
-```
+This is much safer than clearing/replacing each store independently.
 
-A marker always targets the canonical Location ID. If that Location has a scoped child/detail Map, the visual marker drills into that Map. Otherwise it opens the Location entry.
+## V1 compatibility
 
-Image versions are separate from Map identity so historical/political/physical revisions do not duplicate geography. Map media cannot be deleted underneath a live Map Version.
+The portable backup identifier remains:
 
-## Backup / restore boundary
+`kayworks-world-bible-backup`
 
-Restore is treated as untrusted input even for a private application.
+It is intentionally not renamed because that string is a compatibility contract, not branding.
 
-The pipeline is:
+V2 can also detect the legacy V1 IndexedDB database named `kayworks_world_bible` on the same origin. It only reads that database for explicit migration and does not delete it.
 
-```text
-parse
-→ reject unsupported future schema
-→ deterministic migration of supported older schema
-→ structural + cross-record validation
-→ fully decode/verify media
-→ validate again
-→ one IndexedDB transaction across every store
-→ commit all stores or preserve the old database
-```
+## Draft recovery
 
-`js/data/validation.js` validates IDs, entity types/statuses, relationship types/endpoints, hierarchy references, settings, media links, clues/reveals, knowledge records, map versions, and map-marker coordinates.
+Drafts use a separate database named `unwritten_local_drafts`.
 
-ZIP restore verifies every referenced media member exists and checks ZIP CRC32 before database replacement.
+A draft stores:
 
-## Graphs
+- entry ID
+- current unsaved entity snapshot
+- base server `updatedAt`
+- local `savedAt`
 
-Relationship, family, and knowledge graphs remain derived views rather than independent data sources.
+A draft is auto-recovered only when its base revision still matches the current server entry, avoiding blind overwrites after another device has changed the record.
 
-## Media lifecycle
+## Authentication
 
-Media object URLs are UI-session resources, not persistence. Cached object URLs are revoked whenever persisted media state is refreshed.
+UnWritten does not implement accounts/passwords.
 
-Map Version deletion removes its markers and only deletes the underlying media blob when that blob is not still reused elsewhere.
+Cloudflare Access is the authentication boundary. `workers.dev` and preview URLs are disabled to reduce alternate public ingress.
 
-## Backup formats
+A future defense-in-depth enhancement could validate Access JWT audience/signature in the Worker once the project's Team Domain and Application AUD are intentionally added to deployment configuration. It is not fabricated or hard-coded in V2 because those account-specific values were not supplied.
 
-### JSON
+## Offline behavior
 
-All stores are exported. Media blobs are encoded as data URLs for one-file portability.
+V2 is **not an offline-authoritative application**. The service worker caches only the application shell. API requests bypass Cache Storage and always go to the Worker.
 
-### ZIP
+If the network is unavailable, unsaved text can still remain in the local draft cache, but canonical reads/writes require the server.
 
-```text
-manifest.json
-media/<media-id>.<extension>
-```
+## Why no framework migration
 
-Media remains binary and CRC-checked on restore.
-
-### Markdown
-
-Human-readable export resolves stable IDs to names. It is an escape hatch/reference format, not a lossless database replacement.
-
-## Privacy
-
-There is still no remote content database. `noindex` discourages indexing of the static shell but is not access control. A hosted private deployment should use hosting-layer protection such as Cloudflare Access.
-
-Origin separation remains intentional: different hostnames do not share IndexedDB. Use backups when moving the authoritative workspace.
-
-## Cross-device sync decision
-
-Encrypted sync remains deliberately out of scope until real usage proves a need. Adding it safely would require a separate threat model for authentication, remote authorization, encryption/key recovery, offline conflicts, and operational backups.
+The existing vanilla UI/domain architecture remains appropriate. The storage boundary changed because the reliability requirement changed; that does not create a reason to rewrite the frontend in React/Vue/TypeScript or introduce a separate application server.

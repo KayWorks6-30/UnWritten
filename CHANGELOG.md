@@ -1,5 +1,52 @@
 # Changelog
 
+## V2.0.0 — Cloudflare-backed private workspace
+
+### Storage architecture
+- moved authoritative structured lore/story data from browser IndexedDB to Cloudflare D1
+- moved maps/images/media binaries to a private Cloudflare R2 bucket
+- added same-origin Cloudflare Worker API for all canonical reads/writes
+- retained IndexedDB only for recoverable unsaved drafts and read-only legacy V1 migration
+- disabled `workers.dev` and preview URLs in the production Worker configuration
+
+### Cloudflare deployment
+- added `wrangler.jsonc` with the production `unwritten` D1/R2 bindings
+- added D1 migration `migrations/0001_initial.sql`
+- added local Wrangler development workflow using simulated local D1/R2 resources
+- added production migration/deploy npm scripts
+
+### Migration / recovery
+- preserved the V1 `kayworks-world-bible-backup` format
+- added direct same-origin V1 IndexedDB → D1/R2 migration from Settings
+- added staged R2 restore sessions so media uploads are not bundled into one giant restore request
+- structured restore commits through one transactional D1 batch
+- preserves old R2 objects until the new D1 snapshot commits successfully
+
+### Editing safety
+- added local unsaved-entry draft caching
+- drafts are removed only after the cloud save succeeds
+- draft auto-recovery checks the base server revision before applying an existing-entry draft
+
+### Runtime hardening
+- API GET requests bypass the service-worker cache
+- media content is streamed from private R2 through protected same-origin Worker routes
+- Worker validates entity/relationship/hierarchy/knowledge/map references before ordinary writes
+- boot fails clearly when D1 migrations have not been applied instead of silently falling back to browser storage
+
+### Verification
+- expanded automated suite from 25 to 33 tests
+- added binding/privacy/storage-boundary tests
+- added D1 migration structure checks
+- SQLite smoke-tested the production migration
+
+## 1.1.1 — UnWritten.KayWorks naming baseline
+
+- Renamed the visible application, repository package, PWA metadata, and documentation from Galatea World Bible to **UnWritten.KayWorks**.
+- Preserved the IndexedDB database name and backup format identifiers so existing V1 data and backups remain compatible.
+- Existing default project settings named exactly `Galatea` migrate to `UnWritten.KayWorks`; lore/location entries named Galatea are untouched.
+- No persistence architecture changes are included here; Cloudflare D1/R2 migration is reserved for V2.0.
+
+
 ## 1.1.0 — Recovery hardening and visual atlas
 
 ### Visual atlas

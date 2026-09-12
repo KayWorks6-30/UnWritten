@@ -1,119 +1,225 @@
-# Galatea World Bible — V1.1.0
+# UnWritten.KayWorks — V2.0.0
 
-A private, local-first author workspace for worldbuilding, story planning, visual maps, mysteries, history, knowledge tracking, and long-term canon management.
+A private author workspace for worldbuilding, story planning, visual maps, mysteries, historical timelines, knowledge tracking, and long-term canon management.
 
-V1.1 keeps the existing static/browser-first architecture and focuses on two things: **data-recovery integrity** and a much more useful **visual atlas workflow**. It intentionally does not add a backend, accounts, or cloud sync.
+V2 is the storage transition release. The V1 authoring model and atlas remain intact, but **saved canon is no longer browser-only**:
 
-## Core workspace
+- Cloudflare **D1** is the authoritative structured database.
+- Private Cloudflare **R2** stores maps, character art, diagrams, and other uploaded media.
+- Cloudflare **Access** remains the authentication/front-door layer.
+- Browser **IndexedDB is used only for temporary unsaved drafts and read-only V1 migration detection**.
+- JSON, ZIP, and Markdown exports remain available so the project is not trapped in Cloudflare.
 
-- Dashboard with recently-created/recently-edited lists, favorites, current book, questions, mysteries, and fast idea capture
-- Typed lore entries for world lore, gods/ancient beings, locations, maps, historical events, eras, civilizations/cultures, religions, characters, creatures, organizations, artifacts, languages, trilogy overview, books, chapters, scenes, mysteries, foreshadowing, questions, and ideas
-- Canon status tracking: Canon, Provisional, Concept, Contradicted, Shelved, Unknown
-- Separate Author Truth, Modern Scholarship, Common Belief, Cultural Interpretations, and Reader Knowledge layers where relevant
-- Structured entry relationships and global search
-- Reusable local media library
-- Soft archive before permanent deletion
+## Production resources already configured
 
-## Visual Atlas
+The repository is wired to the production resources requested for this project:
 
-Maps are structured entries backed by real image files stored locally in IndexedDB.
+- Worker name: `unwritten`
+- Production hostname: `unwritten.kayworks.dev`
+- D1 database: `unwritten`
+- D1 database ID: `15ab3fb3-8673-4f5b-8633-1746fb6fa677`
+- D1 binding: `DB`
+- R2 bucket: `unwritten`
+- R2 binding: `MEDIA`
+- `workers.dev`: disabled
+- Worker preview URLs: disabled
 
-A Map can now define:
+The D1 UUID and R2 bucket name are resource identifiers, not credentials. No API key, R2 S3 key, database password, or secret is stored in the frontend.
 
-- **Geographic Scope** — the Location the map actually depicts, such as Galatea, a continent, kingdom, province, or city
-- **Parent / Overview Map** — the broader map this one drills down from
-- multiple image versions for political, physical, historical, exploration, ancient, current, or other views
-- location pins stored against stable Location IDs
-- child/detail maps
+## Architecture
 
-### Typical workflow
-
-1. Create the geographic Location hierarchy, for example `Galatea → Continent → Kingdom → City`.
-2. Open a Location and choose **Map this location**, or create a Map from the Maps page.
-3. Set its Geographic Scope. For a kingdom map, select that Kingdom Location.
-4. Optionally set a Parent / Overview Map, such as the world or continent map.
-5. Choose **Upload map image** and select your existing PNG/JPG/WebP/etc.
-6. Place pins for Locations visible on that map.
-7. If a pinned Location has its own scoped Map, clicking that pin drills directly into the detailed map. Otherwise it opens the Location lore page.
-8. Use **Fit / − / +** to navigate large map images.
-
-This means you can keep a complete world map while also maintaining detailed maps for specific kingdoms, cities, ruins, historical borders, or any other area without duplicating the underlying geography records.
-
-The app does not generate map artwork. You provide the map image; Galatea stores, versions, links, and navigates it.
-
-## Data integrity and recovery
-
-V1.1 hardens backup/restore substantially:
-
-- restore migrates only explicitly supported older schemas
-- backups from a newer unsupported schema are rejected rather than silently downgraded
-- entities, statuses, relationships, hierarchy references, knowledge records, map records, media, markers, and settings are validated before restore
-- media is fully decoded before the database is touched
-- restore replaces all IndexedDB stores in **one multi-store transaction**
-- failed restore leaves the previous database intact
-- ZIP restore rejects missing media members
-- ZIP entries are CRC-checked for corruption
-- media used by a Map Version cannot be deleted directly from the Media page
-- Map Versions have an explicit delete workflow that also removes their markers
-- permanent deletion blocks active hierarchical children instead of leaving dangling parent IDs
-- optional references to permanently deleted entries are cleared deterministically
-
-Restore remains replace-only by design. Export a safety backup before restoring another file.
-
-## Editing safeguards
-
-- Existing entry types are locked after creation so changing `Location → Character`, for example, cannot leave hidden stale type-specific fields or generated relationships.
-- New unsaved entries can still change type; switching type clears unsaved type-specific fields.
-- Archived parents remain visible in existing parent selectors as `— Archived`, preventing accidental relationship loss when editing a child.
-- Cached media object URLs are revoked whenever media state refreshes.
-- Primary entry lists and global search results are native buttons; graph nodes expose keyboard focus/activation.
-
-## Timeline, story, mysteries, and graphs
-
-V1 retains the completed V1.0 systems:
-
-- uncertain historical dates with sortable start/end values and era bands
-- Book → Chapter → Scene hierarchy
-- Idea Inbox → structured entry conversion
-- clue/reveal tracking tied to story positions
-- character/reader knowledge records
-- relationship, family-tree, and knowledge visualizations
-- JSON, ZIP, and Markdown export
-
-## Storage and privacy
-
-All lore and images live in the browser's IndexedDB database for this site/origin. There is no remote lore database.
-
-Clearing site data, losing the browser profile/device, or changing origins can remove access to that local history. Keep ZIP backups somewhere outside the browser.
-
-If the static shell is hosted online, use something such as Cloudflare Access when you also want the site itself hidden behind authentication. `noindex` is not authentication.
-
-## Run locally
-
-```bash
-npm run serve
+```text
+Cloudflare Access
+      │
+      ▼
+unwritten.kayworks.dev
+      │
+      ▼
+Cloudflare Worker: unwritten
+      │
+      ├── Static assets (vanilla HTML/CSS/JS)
+      ├── /api/*
+      │      ├── DB    → D1 unwritten
+      │      └── MEDIA → private R2 unwritten
+      │
+Browser
+      └── IndexedDB only for unsaved draft recovery
 ```
 
-Then open the shown localhost address.
+The browser never receives D1 or R2 credentials. All authoritative writes happen through same-origin Worker API routes.
 
-## Tests and release checks
+## First production deployment
+
+### 1. Keep a V1 backup first
+
+If the current V1 site contains any real data, **export a V1 ZIP backup before replacing the deployed V1 files**.
+
+V2 still understands the V1 backup format, and a same-origin V1 IndexedDB database can also be detected from V2 Settings for direct migration.
+
+### 2. Authenticate Wrangler
+
+From this repository:
 
 ```bash
-npm test
-npm run build
+npx wrangler login
+```
+
+### 3. Apply the D1 migration
+
+The `unwritten` D1 database already exists, but it is intentionally empty until this migration is applied:
+
+```bash
+npm run db:migrate:remote
+```
+
+This applies `migrations/0001_initial.sql` to the production D1 database.
+
+### 4. Deploy V2
+
+```bash
+npm run deploy
+```
+
+`npm run deploy` runs the complete verification/build first and then deploys the Worker plus static assets.
+
+The Worker configuration in `wrangler.jsonc` binds:
+
+```text
+DB    → D1 unwritten
+MEDIA → R2 unwritten
+```
+
+### 5. Confirm Cloudflare Access
+
+The hostname `unwritten.kayworks.dev` must remain protected by your Cloudflare Access policy.
+
+This repository intentionally disables `workers.dev` and preview URLs so those do not create alternate public routes around the protected production hostname.
+
+If `unwritten.kayworks.dev` is still attached to an old Cloudflare Pages project, remove that custom-domain attachment before the first Worker Custom Domain deployment. The Worker is now the origin for the hostname.
+
+### 6. Open Settings & Data
+
+The Cloud Storage card should show **Connected**.
+
+If the D1 migration was not applied, the app intentionally stops on a Storage Setup Required screen rather than silently falling back to browser-only data.
+
+## Migrating V1 data
+
+V2 supports two migration paths.
+
+### Same browser + same hostname
+
+If the old V1 IndexedDB still exists, Settings & Data shows **V1 browser migration**.
+
+Choose **Import V1 browser database**. V2 reads the legacy database without modifying it, validates the snapshot, uploads its media to R2, and atomically replaces the structured D1 dataset.
+
+The V1 browser database is retained afterward as an extra safety copy.
+
+### V1 JSON or ZIP
+
+Use **Restore JSON / ZIP** in Settings & Data.
+
+The existing `kayworks-world-bible-backup` format remains supported. ZIP remains preferred for projects with substantial media.
+
+## Restore behavior in V2
+
+Restores use a staged server workflow:
+
+1. Parse/migrate/validate the complete manifest.
+2. Create a temporary restore session in private R2.
+3. Upload each media file separately.
+4. Verify every expected media file exists.
+5. Write the complete D1 structured snapshot in one transactional `DB.batch()`.
+6. Switch media metadata to newly written R2 objects.
+7. Remove superseded R2 objects and temporary restore files.
+
+If the D1 transaction fails, the previous structured database remains unchanged and newly staged final objects are cleaned up.
+
+Restore remains **replace-only**, not merge, to keep recovery semantics deterministic.
+
+## Normal save behavior
+
+Entry save:
+
+```text
+Editor
+→ /api/store/entities/:id
+→ Worker validation
+→ D1
+```
+
+Media save:
+
+```text
+File picker
+→ /api/media/:id
+→ Worker
+→ private R2 object
+→ D1 media metadata
+```
+
+Map versions continue linking stable Map/Location IDs to media metadata rather than embedding map images in entity records.
+
+## Local draft recovery
+
+While an entry editor is open, unsaved text is cached locally in a separate IndexedDB database.
+
+That cache is **not canonical storage**. It exists only to recover accidental refreshes/tab closes before Save.
+
+Saved entries are removed from the draft cache after the D1 write succeeds.
+
+## Local development
+
+There is still only one Cloudflare production environment. Development uses Wrangler's local resource simulation rather than a second hosted site/database/bucket.
+
+First initialize local D1:
+
+```bash
+npm run db:migrate:local
+```
+
+Then run:
+
+```bash
+npm run dev
+```
+
+Wrangler uses local simulated D1/R2 storage by default for local development, so normal development does not write to the production `unwritten` resources.
+
+## Verification
+
+```bash
 npm run verify
 ```
 
-`npm run verify` runs the Node regression suite, builds the deploy folder, checks asset/import references, scans duplicate HTML IDs, and performs a basic committed-secret scan.
+V2 verification includes:
 
-A real browser IndexedDB recovery harness is also included:
+- domain/schema regression tests
+- backup/ZIP validation tests
+- V2 Cloudflare binding tests
+- D1 migration/table checks
+- remote-vs-local persistence-boundary checks
+- API service-worker cache protection
+- JS import checks
+- static asset checks
+- duplicate HTML ID check
+- basic committed-secret/private-key scan
+- production static build
 
-```bash
-npm run test:browser
-```
+## Important privacy boundary
 
-It requires Chromium/Chrome on `PATH` (or `CHROME_BIN`). The harness tests IndexedDB → JSON backup → replace → restore, media recovery, future-schema rejection, and multi-store transaction rollback.
+Cloudflare D1/R2 being private resources does **not** by itself authenticate visitors to the Worker. Keep Cloudflare Access enabled on the production Worker/hostname.
 
-## Deployment
+This repository does not contain a second username/password system.
 
-This remains a static app. Deploy the contents of `dist/` (or the provided deploy ZIP) to the chosen static origin.
+## Portability
+
+Even though D1/R2 are authoritative in V2, the application still supports:
+
+- full JSON backup
+- full ZIP backup with binary media
+- restore from JSON/ZIP
+- Markdown export
+- V1 backup import
+
+The goal is safer authoritative storage without turning the author's work into an opaque hosted-only format.

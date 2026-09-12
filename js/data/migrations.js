@@ -18,7 +18,7 @@ export function migrateEntity(entity = {}) {
 }
 
 export function migrateBackupData(data) {
-  if (!data || data.format !== 'kayworks-world-bible-backup') throw new Error('This is not a World Bible backup file.');
+  if (!data || data.format !== 'kayworks-world-bible-backup') throw new Error('This is not an UnWritten.KayWorks backup file.');
   const sourceVersion = Number(data.schemaVersion || 1);
   if (!Number.isInteger(sourceVersion) || sourceVersion < 1) throw new Error('Backup schema version is invalid.');
   if (sourceVersion > SCHEMA_VERSION) throw new Error(`This backup uses schema ${sourceVersion}, but this app only supports up to schema ${SCHEMA_VERSION}. Update the app before restoring it.`);

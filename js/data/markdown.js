@@ -6,7 +6,7 @@ function nameFor(id, entities){ return entities.find(e=>e.id===id)?.name || id |
 
 export function buildMarkdownExport({project,entities,relations,clues,reveals,knowledge,mapVersions,mapMarkers}){
   const active=entities.filter(e=>!e.archivedAt).sort((a,b)=>(ENTRY_TYPES[a.type]?.label||a.type).localeCompare(ENTRY_TYPES[b.type]?.label||b.type)||a.name.localeCompare(b.name));
-  let out=`# ${clean(project?.name)||'World Bible'}\n\nExported ${new Date().toISOString()}\n\n`;
+  let out=`# ${clean(project?.name)||'UnWritten.KayWorks'}\n\nExported ${new Date().toISOString()}\n\n`;
   for(const entity of active){
     const def=ENTRY_TYPES[entity.type]||{label:entity.type,fields:[]}; out+=`---\n\n# ${entity.name}\n\n`;
     out+=`**Type:** ${def.label}  \n**Status:** ${entity.status}  \n`;
