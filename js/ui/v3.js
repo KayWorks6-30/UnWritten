@@ -225,7 +225,7 @@ export function createV3Controller(ctx){
   }
 
   function bindGlobal(){
-    document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();const input=document.querySelector('#global-search');input?.focus();input?.select();}if(e.key==='Escape'&&document.body.classList.contains('focus-mode'))document.body.classList.remove('focus-mode');});
+    document.addEventListener('keydown',e=>{if(e.key==='Escape'&&document.body.classList.contains('focus-mode'))document.body.classList.remove('focus-mode');});
   }
 
   return {renderContinuity,renderPlotGrid,renderWorldTools,renderWorkbench,renderReaderPreview,renderEntryEnhancements,loadEntryRevisions,handleClick,bindGlobal};

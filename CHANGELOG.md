@@ -1,3 +1,14 @@
+## 3.0.1 — Navigation and entry-flow polish
+
+- Made the top toolbar non-sticky so global search/quick actions leave the viewport naturally while reading.
+- Added a sidebar Search control and focused command/search palette; `Ctrl/Cmd + K` opens the same palette.
+- Made desktop navigation collapsible with a persistent browser-local preference and retained mobile drawer behavior.
+- Reworked All Lore / World / Characters / Geography / History / Story / Mysteries / Ideas / Questions into a single vertical flow: filters at the top, optional opened entry next, matching results below.
+- Added live result counts and Clear filters.
+- Added an explicit Close action for opened entry details.
+- Opening entries, relationships, breadcrumbs, graph nodes, and archived records now scrolls the opened detail into view instead of leaving it above the current scroll position.
+- No persistence, schema, D1/R2, Access, backup, or story-domain semantics changed.
+
 ## 3.0.0 — RC1 finalization fixes
 
 - Made structured backup restore atomic by replacing the destructive multi-batch D1 restore with one transactional `DB.batch()` call.

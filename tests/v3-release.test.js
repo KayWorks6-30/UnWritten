@@ -103,7 +103,7 @@ test('V3 service worker precaches the complete V3 boot modules and browser ident
     readFile(new URL('../index.html',import.meta.url),'utf8'),
     readFile(new URL('../manifest.webmanifest',import.meta.url),'utf8')
   ]);
-  assert.match(sw,/unwritten-v3\.0\.0/);
+  assert.match(sw,/unwritten-v3\.0\.1/);
   assert.match(sw,/\.\/js\/domain\/intelligence\.js/);
   assert.match(sw,/\.\/js\/ui\/v3\.js/);
   assert.match(html,/<title>UnWritten<\/title>/);

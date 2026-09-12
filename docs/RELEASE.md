@@ -1,4 +1,4 @@
-# V3.0.0 Release Verification
+# V3.0.1 Release Verification
 
 ## Automated release gate
 
@@ -56,7 +56,7 @@ If a managed Chromium policy blocks loopback/local test origins, record that as 
 
 Owner:
 
-- health endpoint reports `3.0.0`, correct email and `owner`
+- health endpoint reports `3.0.1`, correct email and `owner`
 - old production content still loads
 - entity save/reload works
 - stale two-browser edit returns a conflict instead of silent overwrite

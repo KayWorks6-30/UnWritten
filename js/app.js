@@ -15,7 +15,7 @@ import { continuityWarnings } from './domain/intelligence.js';
 const state = {
   entities: [], relations: [], media: [], settings: {}, clues: [], reveals: [], knowledge: [], mapVersions: [], mapMarkers: [], workspace: [],
   editorEntity: null, editorBaseUpdatedAt: null, conversionSourceId: null, selectedId: null, selectedMapVersionId: null, markerPlacementLocationId: null, mapZoom: 100,
-  mediaObjectUrls: new Map(), drafts: [], storageStatus: null, legacyAvailable: false
+  mediaObjectUrls: new Map(), drafts: [], storageStatus: null, legacyAvailable: false, collectionFilters: {}
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -27,6 +27,7 @@ const clueDialog = $('#clue-dialog');
 const revealDialog = $('#reveal-dialog');
 const knowledgeDialog = $('#knowledge-dialog');
 const mapVersionDialog = $('#map-version-dialog');
+const searchDialog = $('#search-dialog');
 
 function esc(value=''){ return String(value).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
 function text(value=''){ return esc(value).replace(/\n/g,'<br>'); }
@@ -62,7 +63,7 @@ async function refreshDrafts(){ try{ state.drafts=(await getDrafts()).sort((a,b)
 
 function toast(message){ const el=document.createElement('div'); el.className='toast'; el.textContent=message; $('#toast-region').appendChild(el); setTimeout(()=>el.remove(),3000); }
 function entryListItem(entity,currentRoute='entries'){
-  return `<button type="button" class="list-item entry-list-button ${entity.archivedAt?'archived-item':''}" data-open-entry="${esc(entity.id)}" data-open-route="${esc(currentRoute)}"><span><span class="list-title">${esc(entity.name||'Untitled')}</span><span class="list-meta">${esc(typeLabel(entity.type))} • edited ${esc(fmtDate(entity.updatedAt))}${entity.archivedAt?` • archived ${esc(fmtDate(entity.archivedAt))}`:''}</span></span><span class="badges">${entity.favorite?'<span class="badge">★</span>':''}${badge(entity.status)}${entity.archivedAt?'<span class="badge">Archived</span>':''}</span></button>`;
+  return `<button type="button" class="list-item entry-list-button ${entity.archivedAt?'archived-item':''} ${state.selectedId===entity.id&&route().name===currentRoute?'is-selected':''}" data-open-entry="${esc(entity.id)}" data-open-route="${esc(currentRoute)}"><span><span class="list-title">${esc(entity.name||'Untitled')}</span><span class="list-meta">${esc(typeLabel(entity.type))} • edited ${esc(fmtDate(entity.updatedAt))}${entity.archivedAt?` • archived ${esc(fmtDate(entity.archivedAt))}`:''}</span></span><span class="badges">${entity.favorite?'<span class="badge">★</span>':''}${badge(entity.status)}${entity.archivedAt?'<span class="badge">Archived</span>':''}</span></button>`;
 }
 
 const COLLECTIONS={
@@ -105,14 +106,25 @@ function renderDashboard(){
 function renderCollection(routeName,selectedId){
   const cfg=COLLECTIONS[routeName]||COLLECTIONS.entries;
   const base=activeEntities(); const pool=cfg.types?base.filter(e=>cfg.types.includes(e.type)):base;
-  const tags=uniqueTags(pool); const selected=state.entities.find(e=>e.id===selectedId&&!e.archivedAt)||pool[0]||null; state.selectedId=selected?.id||null;
-  const typeOptions=cfg.types&&cfg.types.length===1?'':`<select id="collection-type"><option value="">All types</option>${(cfg.types||Object.keys(ENTRY_TYPES)).map(t=>`<option value="${esc(t)}">${esc(typeLabel(t))}</option>`).join('')}</select>`;
+  const tags=uniqueTags(pool); const selected=selectedId?pool.find(e=>e.id===selectedId)||null:null; state.selectedId=selected?.id||null;
+  const savedFilters=state.collectionFilters[routeName]||{q:'',type:'',status:'',tag:''};
+  const typeOptions=cfg.types&&cfg.types.length===1?'':`<select id="collection-type"><option value="">All types</option>${(cfg.types||Object.keys(ENTRY_TYPES)).map(t=>`<option value="${esc(t)}" ${savedFilters.type===t?'selected':''}>${esc(typeLabel(t))}</option>`).join('')}</select>`;
   const statusSet=[...new Set(pool.map(e=>e.status))].sort();
   const extraStory=routeName==='story'?renderTrilogyOverview():'';
+  const detail=selected?`<section class="card collection-detail" id="detail-panel" data-entry-detail="${esc(selected.id)}">${renderEntryDetail(selected,routeName)}</section>`:'';
   main.innerHTML=pageHeader(cfg.title,cfg.description,`<button class="button primary" data-new-entry="${esc(cfg.defaultType)}">+ New ${esc(typeLabel(cfg.defaultType))}</button>`)+extraStory+`
-    <div class="entry-layout ${extraStory?'section':''}"><section class="card list-panel"><div class="filter-row"><input id="collection-search" type="search" placeholder="Filter this section…" />${typeOptions}<select id="collection-status"><option value="">All statuses</option>${statusSet.map(s=>`<option>${esc(s)}</option>`).join('')}</select><select id="collection-tag"><option value="">All tags</option>${tags.map(t=>`<option>${esc(t)}</option>`).join('')}</select></div><div id="collection-list" class="list"></div></section><section class="card detail-panel" id="detail-panel">${selected?renderEntryDetail(selected,routeName):emptyState('No entries yet','Create the first entry in this section to begin.')}</section></div>`;
-  const update=()=>{ const q=$('#collection-search')?.value||'',type=$('#collection-type')?.value||'',status=$('#collection-status')?.value||'',tag=$('#collection-tag')?.value||''; const results=searchEntities(pool,q,{type:type||null,status:status||null,tag:tag||null}); $('#collection-list').innerHTML=results.length?results.map(e=>entryListItem(e,routeName)).join(''):emptyState('No matches','Try a different search or filter.'); };
-  ['#collection-search','#collection-type','#collection-status','#collection-tag'].forEach(sel=>$(sel)?.addEventListener('input',update)); update();
+    <div class="collection-stack ${extraStory?'section':''}">
+      <section class="card collection-filter-card" aria-label="${esc(cfg.title)} filters">
+        <div class="filter-row"><input id="collection-search" type="search" placeholder="Search this section…" value="${esc(savedFilters.q)}" />${typeOptions}<select id="collection-status"><option value="">All statuses</option>${statusSet.map(s=>`<option ${savedFilters.status===s?'selected':''}>${esc(s)}</option>`).join('')}</select><select id="collection-tag"><option value="">All tags</option>${tags.map(t=>`<option ${savedFilters.tag===t?'selected':''}>${esc(t)}</option>`).join('')}</select></div>
+        <div class="collection-filter-meta"><span class="muted small" id="collection-count"></span><button class="button ghost" type="button" id="clear-collection-filters">Clear filters</button></div>
+      </section>
+      ${detail}
+      <section class="card collection-results"><div class="section-title"><div><h2>${esc(cfg.title)} entries</h2><div class="muted small">Filters stay at the top; matching entries remain below.</div></div></div><div id="collection-list" class="list"></div></section>
+    </div>`;
+  const update=()=>{ const q=$('#collection-search')?.value||'',type=$('#collection-type')?.value||'',status=$('#collection-status')?.value||'',tag=$('#collection-tag')?.value||''; state.collectionFilters[routeName]={q,type,status,tag}; const results=searchEntities(pool,q,{type:type||null,status:status||null,tag:tag||null}); $('#collection-list').innerHTML=results.length?results.map(e=>entryListItem(e,routeName)).join(''):emptyState(pool.length?'No matches':'No entries yet',pool.length?'Try a different search or filter.':'Create the first entry in this section to begin.'); const count=$('#collection-count'); if(count) count.textContent=`Showing ${results.length} of ${pool.length} ${pool.length===1?'entry':'entries'}.`; };
+  ['#collection-search','#collection-type','#collection-status','#collection-tag'].forEach(sel=>$(sel)?.addEventListener('input',update));
+  $('#clear-collection-filters')?.addEventListener('click',()=>{ ['#collection-search','#collection-type','#collection-status','#collection-tag'].forEach(sel=>{const el=$(sel);if(el)el.value='';}); update(); $('#collection-search')?.focus(); });
+  update();
   if(selected) v3().loadEntryRevisions(selected.id);
 }
 
@@ -141,7 +153,7 @@ function renderEntryDetail(entity,routeName='entries'){
   const knowledgeFields=(def?.fields||[]).filter(f=>f.knowledge&&entity.fields?.[f.key]&&String(entity.fields[f.key]).trim());
   const specialActions=[entity.type==='idea'&&entity.status!=='Converted'?`<button class="button primary" data-convert-idea="${esc(entity.id)}">Convert to entry</button>`:'',entity.type==='mystery'?`<button class="button" data-add-clue="${esc(entity.id)}">+ Clue</button><button class="button" data-add-reveal="${esc(entity.id)}">+ Reveal</button>`:'',entity.archivedAt?`<button class="button" data-unarchive-entry="${esc(entity.id)}">Restore</button>`:''].join('');
   return `${entity.archivedAt?'<div class="archive-banner">This entry is archived. It remains in backups and can be restored or permanently deleted.</div>':''}${hierarchyBreadcrumb(entity)}
-    <div class="detail-head"><div><div class="eyebrow">${esc(def?.group||'ENTRY')} • ${esc(def?.label||entity.type)}</div><h2>${esc(entity.name)}</h2><div class="badges">${badge(entity.status)}${(entity.tags||[]).map(t=>`<span class="badge">#${esc(t)}</span>`).join('')}</div></div><div class="actions">${specialActions}<button class="button ghost" data-toggle-favorite="${esc(entity.id)}">${entity.favorite?'★ Favorited':'☆ Favorite'}</button><button class="button" data-edit-entry="${esc(entity.id)}">Edit</button></div></div>
+    <div class="detail-head"><div><div class="eyebrow">${esc(def?.group||'ENTRY')} • ${esc(def?.label||entity.type)}</div><h2>${esc(entity.name)}</h2><div class="badges">${badge(entity.status)}${(entity.tags||[]).map(t=>`<span class="badge">#${esc(t)}</span>`).join('')}</div></div><div class="actions">${specialActions}<button class="button ghost" data-toggle-favorite="${esc(entity.id)}">${entity.favorite?'★ Favorited':'☆ Favorite'}</button><button class="button" data-edit-entry="${esc(entity.id)}">Edit</button><button class="button ghost detail-close" data-close-detail="${esc(routeName)}" aria-label="Close ${esc(entity.name)} details">Close</button></div></div>
     ${entity.summary?`<section class="detail-section"><h3>Summary</h3><div class="prose">${text(entity.summary)}</div></section>`:''}
     ${knowledgeFields.length?`<section class="detail-section"><h3>Knowledge layers</h3><div class="knowledge-grid">${knowledgeFields.map(f=>`<div class="knowledge-card"><h4>${esc(f.label)}</h4><div class="prose">${text(entity.fields[f.key])}</div></div>`).join('')}</div></section>`:''}
     ${detailFields.map(f=>`<section class="detail-section"><h3>${esc(f.label)}</h3>${displayFieldValue(f,entity.fields[f.key],routeName)}</section>`).join('')}
@@ -316,8 +328,9 @@ function renderFamilyTree(rootId,filter=''){
 
 function renderArchive(){
   const archived=state.entities.filter(e=>e.archivedAt).sort((a,b)=>new Date(b.archivedAt)-new Date(a.archivedAt));
+  const selected=route().selected?entityById(route().selected):null; state.selectedId=selected?.archivedAt?selected.id:null;
   main.innerHTML=pageHeader('Archive','Archived lore is retained for history, backups, and possible reuse. Permanent deletion is available only after archiving.','')+`<section class="card"><div class="list">${archived.length?archived.map(e=>entryListItem(e,'archive')).join(''):emptyState('Archive is empty','Archiving removes entries from normal working views without destroying them.')}</div></section>`;
-  if(route().selected){ const entity=entityById(route().selected); if(entity?.archivedAt){ main.innerHTML+=`<section class="card section">${renderEntryDetail(entity,'archive')}</section>`; v3().loadEntryRevisions(entity.id); } }
+  if(selected?.archivedAt){ main.innerHTML+=`<section class="card section collection-detail" id="detail-panel" data-entry-detail="${esc(selected.id)}">${renderEntryDetail(selected,'archive')}</section>`; v3().loadEntryRevisions(selected.id); }
 }
 
 function renderSettings(){
@@ -348,6 +361,7 @@ function renderRoute(){
   const r=route(); if(r.name!=='maps') state.markerPlacementLocationId=null; document.querySelectorAll('.primary-nav a').forEach(a=>a.classList.toggle('active',a.dataset.route===r.name));
   if(COLLECTIONS[r.name]) renderCollection(r.name,r.selected); else if(r.name==='dashboard') renderDashboard(); else if(r.name==='timeline') renderTimeline(); else if(r.name==='maps') renderMaps(r.selected); else if(r.name==='media') renderMedia(); else if(r.name==='reveals') renderReveals(); else if(r.name==='knowledge') renderKnowledge(); else if(r.name==='continuity') v3().renderContinuity(); else if(r.name==='plot-grid') v3().renderPlotGrid(); else if(r.name==='world-tools') v3().renderWorldTools(); else if(r.name==='workbench') v3().renderWorkbench(); else if(r.name==='reader-preview') v3().renderReaderPreview(); else if(r.name==='graphs') renderGraphs(); else if(r.name==='archive') renderArchive(); else if(r.name==='settings') renderSettings(); else setRoute('dashboard');
   applyRoleUi(); main.focus({preventScroll:true});
+  if(r.selected){ requestAnimationFrame(()=>{ const detail=document.querySelector('#detail-panel,[data-entry-detail]'); if(detail) detail.scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'}); }); }
 }
 
 function entityOptions(types,value,currentId){ const pool=activeEntities().filter(e=>(!types||types.includes(e.type))&&e.id!==currentId); const current=value?entityById(value):null; if(current&&current.archivedAt&&current.id!==currentId&&(!types||types.includes(current.type))&&!pool.some(e=>e.id===current.id)) pool.push(current); return pool.sort((a,b)=>a.name.localeCompare(b.name)).map(e=>`<option value="${esc(e.id)}" ${String(value)===String(e.id)?'selected':''}>${esc(e.name)} — ${esc(typeLabel(e.type))}${e.archivedAt?' — Archived':''}</option>`).join(''); }
@@ -416,18 +430,35 @@ async function exportZipAction(){ toast('Building ZIP backup…'); const blob=aw
 async function exportMarkdownAction(){ const markdown=buildMarkdownExport({project:projectSetting(),entities:state.entities,relations:state.relations,clues:state.clues,reveals:state.reveals,knowledge:state.knowledge,mapVersions:state.mapVersions,mapMarkers:state.mapMarkers}); downloadBlob(new Blob([markdown],{type:'text/markdown'}),`${safeName()}-${new Date().toISOString().slice(0,10)}.md`); toast('Markdown exported.'); }
 async function importBackupFile(file){ try{ if(!confirm('Restore this backup and replace the current cloud database? Export your current data first if you need to keep it.')) return; if(file.name.toLowerCase().endsWith('.zip')||file.type==='application/zip') await restoreZipBackup(file,{replace:true}); else await restoreBackup(JSON.parse(await file.text()),{replace:true}); await refreshState(); renderRoute(); toast('Backup restored.'); }catch(error){ console.error(error); toast(error.message||'Could not restore backup.'); } }
 
-function globalSearch(){
-  const input=$('#global-search'),popover=$('#search-popover'),q=input.value.trim(); if(!q){popover.classList.add('hidden');return;}
+function searchResultsHtml(q){
   const commands=[['Create Character','new:character'],['Create Location','new:location'],['Create Idea','new:idea'],['Open Continuity','route:continuity'],['Open Plot Grid','route:plot-grid'],['Open Timeline','route:timeline'],['Open Maps','route:maps'],['Open Workbench','route:workbench'],['Export ZIP Backup','action:export-zip']];
-  if(q.startsWith('>')){ const term=q.slice(1).trim().toLowerCase(),rows=commands.filter(([name])=>name.toLowerCase().includes(term)); popover.innerHTML=rows.length?rows.map(([name,command])=>`<button type="button" class="search-result" data-command="${esc(command)}"><span><strong>${esc(name)}</strong><span class="muted small">Command</span></span></button>`).join(''):'<div class="empty-state">No commands match.</div>'; popover.classList.remove('hidden'); return; }
+  if(q.startsWith('>')){ const term=q.slice(1).trim().toLowerCase(),rows=commands.filter(([name])=>name.toLowerCase().includes(term)); return rows.length?rows.map(([name,command])=>`<button type="button" class="search-result" data-command="${esc(command)}"><span><strong>${esc(name)}</strong><span class="muted small">Command</span></span></button>`).join(''):'<div class="empty-state">No commands match.</div>'; }
   const results=searchEntities(activeEntities(),q).slice(0,9); const wq=q.toLowerCase(); const workspace=state.workspace.filter(w=>['contextNote','task','plotThread','savedView'].includes(w.kind)&&[w.title,JSON.stringify(w.data||{})].join(' ').toLowerCase().includes(wq)).slice(0,4);
-  const html=[...results.map(e=>`<button type="button" class="search-result" data-global-result="${esc(e.id)}"><span><strong>${esc(e.name)}</strong><span class="muted small">${esc(typeLabel(e.type))} • ${esc(e.summary||'')}</span></span>${badge(e.status)}</button>`),...workspace.map(w=>`<button type="button" class="search-result" data-workspace-result="${esc(w.id)}"><span><strong>${esc(w.title||w.kind)}</strong><span class="muted small">${esc(w.kind.replaceAll(/([A-Z])/g,' $1'))}</span></span></button>`)].join('');
-  popover.innerHTML=html||'<div class="empty-state">No matches.</div>'; popover.classList.remove('hidden');
+  return [...results.map(e=>`<button type="button" class="search-result" data-global-result="${esc(e.id)}"><span><strong>${esc(e.name)}</strong><span class="muted small">${esc(typeLabel(e.type))} • ${esc(e.summary||'')}</span></span>${badge(e.status)}</button>`),...workspace.map(w=>`<button type="button" class="search-result" data-workspace-result="${esc(w.id)}"><span><strong>${esc(w.title||w.kind)}</strong><span class="muted small">${esc(w.kind.replaceAll(/([A-Z])/g,' $1'))}</span></span></button>`)].join('')||'<div class="empty-state">No matches.</div>';
 }
+function updateSearch(input,popover,{hideWhenEmpty=true}={}){
+  const q=input?.value.trim()||''; if(!q){ popover.innerHTML=''; if(hideWhenEmpty) popover.classList.add('hidden'); return; }
+  popover.innerHTML=searchResultsHtml(q); popover.classList.remove('hidden');
+}
+function clearSearchUi(){
+  for(const selector of ['#global-search','#palette-search']){ const input=$(selector); if(input) input.value=''; }
+  $('#search-popover')?.classList.add('hidden'); if($('#palette-results')) $('#palette-results').innerHTML='';
+}
+function openSearchDialog(){
+  if(!searchDialog) return; if(!searchDialog.open) searchDialog.showModal(); const input=$('#palette-search'); if(input){ input.value=''; $('#palette-results').innerHTML=''; setTimeout(()=>input.focus(),0); }
+}
+function closeSearchDialog(){ if(searchDialog?.open) searchDialog.close(); }
+
 
 function bindStaticEvents(){
   v3().bindGlobal();
-  window.addEventListener('hashchange',renderRoute); $('#open-sidebar').addEventListener('click',()=>$('#sidebar').classList.add('open')); $('#close-sidebar').addEventListener('click',()=>$('#sidebar').classList.remove('open')); document.querySelector('.primary-nav').addEventListener('click',()=>$('#sidebar').classList.remove('open'));
+  const narrow=()=>window.matchMedia('(max-width: 760px)').matches;
+  const setDesktopSidebar=(collapsed,persist=true)=>{ document.body.classList.toggle('sidebar-collapsed',collapsed); $('#open-sidebar')?.setAttribute('aria-expanded',String(!collapsed)); if(persist) localStorage.setItem('unwritten.sidebarCollapsed',collapsed?'1':'0'); };
+  const openSidebar=()=>{ if(narrow()) $('#sidebar').classList.add('open'); else setDesktopSidebar(false); };
+  const closeSidebar=()=>{ if(narrow()) $('#sidebar').classList.remove('open'); else setDesktopSidebar(true); };
+  if(!narrow()&&localStorage.getItem('unwritten.sidebarCollapsed')==='1') setDesktopSidebar(true,false);
+  window.addEventListener('hashchange',renderRoute); $('#open-sidebar').addEventListener('click',openSidebar); $('#close-sidebar').addEventListener('click',closeSidebar); document.querySelector('.primary-nav').addEventListener('click',()=>{ if(narrow()) $('#sidebar').classList.remove('open'); });
+  $('#sidebar-search').addEventListener('click',()=>{ if(narrow()) $('#sidebar').classList.remove('open'); openSearchDialog(); });
   $('#quick-add').addEventListener('click',()=>openEntryEditor('lore')); $('#random-entry').addEventListener('click',()=>{ const pool=activeEntities(); if(!pool.length) return toast('Create an entry first.'); const pick=pool[Math.floor(Math.random()*pool.length)]; setRoute(sectionForType(pick.type),pick.id); });
   $('#entry-form').addEventListener('submit',saveEntity); $('#close-entry-dialog').addEventListener('click',()=>entryDialog.close()); $('#cancel-entry').addEventListener('click',()=>entryDialog.close()); $('#archive-entry').addEventListener('click',archiveCurrentEntity); $('#delete-entry').addEventListener('click',deleteEntityConfirmed);
   $('#relation-form').addEventListener('submit',saveRelation); $('#close-relation-dialog').addEventListener('click',()=>relationDialog.close()); $('#cancel-relation').addEventListener('click',()=>relationDialog.close());
@@ -436,24 +467,27 @@ function bindStaticEvents(){
   $('#reveal-form').addEventListener('submit',saveReveal); $('#close-reveal-dialog').addEventListener('click',()=>revealDialog.close()); $('#cancel-reveal').addEventListener('click',()=>revealDialog.close());
   $('#knowledge-form').addEventListener('submit',saveKnowledge); $('#close-knowledge-dialog').addEventListener('click',()=>knowledgeDialog.close()); $('#cancel-knowledge').addEventListener('click',()=>knowledgeDialog.close()); $('#knowledge-kind').addEventListener('input',e=>$('#knowledge-knower-wrap').classList.toggle('hidden',e.target.value==='reader'));
   $('#map-version-form').addEventListener('submit',saveMapVersion); $('#close-map-version-dialog').addEventListener('click',()=>mapVersionDialog.close()); $('#cancel-map-version').addEventListener('click',()=>mapVersionDialog.close());
-  $('#global-search').addEventListener('input',globalSearch); $('#global-search').addEventListener('keydown',e=>{if(e.key==='Escape')$('#search-popover').classList.add('hidden');}); $('#import-file').addEventListener('change',e=>{const file=e.target.files?.[0];if(file)importBackupFile(file);e.target.value='';});
-  document.addEventListener('keydown',event=>{ if((event.key==='Enter'||event.key===' ')&&event.target.matches?.('.graph-click')){ event.preventDefault(); const e=entityById(event.target.dataset.openEntry); if(e) setRoute(event.target.dataset.openRoute||sectionForType(e.type),e.id); } });
+  $('#global-search').addEventListener('input',()=>updateSearch($('#global-search'),$('#search-popover'))); $('#global-search').addEventListener('keydown',e=>{if(e.key==='Escape')$('#search-popover').classList.add('hidden');});
+  $('#palette-search').addEventListener('input',()=>updateSearch($('#palette-search'),$('#palette-results'),{hideWhenEmpty:false})); $('#palette-search').addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();closeSearchDialog();}}); $('#close-search-dialog').addEventListener('click',closeSearchDialog);
+  $('#import-file').addEventListener('change',e=>{const file=e.target.files?.[0];if(file)importBackupFile(file);e.target.value='';});
+  document.addEventListener('keydown',event=>{ if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='k'){ event.preventDefault(); openSearchDialog(); } if((event.key==='Enter'||event.key===' ')&&event.target.matches?.('.graph-click')){ event.preventDefault(); const e=entityById(event.target.dataset.openEntry); if(e) setRoute(event.target.dataset.openRoute||sectionForType(e.type),e.id); } });
 
   document.addEventListener('click',async event=>{
-    const target=event.target.closest('[data-new-entry],[data-edit-entry],[data-command],[data-workspace-result],[data-add-plot-beat],[data-delete-workspace],[data-toggle-workspace],[data-open-saved-view],[data-add-whiteboard-node],[data-convert-note],[data-generate-name],[data-toggle-focus],[data-export-manuscript],[data-suggest-link-from],[data-restore-revision],[data-open-entry],[data-toggle-favorite],[data-add-relation],[data-delete-relation],[data-add-media],[data-upload-media],[data-delete-media],[data-global-result],[data-convert-idea],[data-unarchive-entry],[data-add-clue],[data-delete-clue],[data-add-reveal],[data-delete-reveal],[data-add-knowledge],[data-add-knowledge-for],[data-delete-knowledge],[data-add-map-version],[data-map-version],[data-delete-map-version],[data-delete-marker],[data-open-map],[data-zoom-map],[data-new-map-for],[data-recover-draft],[data-discard-draft]');
+    const target=event.target.closest('[data-new-entry],[data-edit-entry],[data-close-detail],[data-command],[data-workspace-result],[data-add-plot-beat],[data-delete-workspace],[data-toggle-workspace],[data-open-saved-view],[data-add-whiteboard-node],[data-convert-note],[data-generate-name],[data-toggle-focus],[data-export-manuscript],[data-suggest-link-from],[data-restore-revision],[data-open-entry],[data-toggle-favorite],[data-add-relation],[data-delete-relation],[data-add-media],[data-upload-media],[data-delete-media],[data-global-result],[data-convert-idea],[data-unarchive-entry],[data-add-clue],[data-delete-clue],[data-add-reveal],[data-delete-reveal],[data-add-knowledge],[data-add-knowledge-for],[data-delete-knowledge],[data-add-map-version],[data-map-version],[data-delete-map-version],[data-delete-marker],[data-open-map],[data-zoom-map],[data-new-map-for],[data-recover-draft],[data-discard-draft]');
     if(target){
       if(await v3().handleClick(target)) return;
-      if(target.dataset.command){ const [kind,value]=target.dataset.command.split(':'); $('#search-popover').classList.add('hidden'); $('#global-search').value=''; if(kind==='new')openEntryEditor(value); if(kind==='route')setRoute(value); if(kind==='action'&&value==='export-zip')await exportZipAction(); }
-      if(target.dataset.workspaceResult){ const item=state.workspace.find(w=>w.id===target.dataset.workspaceResult); if(item){ $('#search-popover').classList.add('hidden'); $('#global-search').value=''; setRoute(item.kind==='plotThread'?'plot-grid':'workbench'); } }
+      if(target.dataset.command){ const [kind,value]=target.dataset.command.split(':'); clearSearchUi(); closeSearchDialog(); if(kind==='new')openEntryEditor(value); if(kind==='route')setRoute(value); if(kind==='action'&&value==='export-zip')await exportZipAction(); }
+      if(target.dataset.workspaceResult){ const item=state.workspace.find(w=>w.id===target.dataset.workspaceResult); if(item){ clearSearchUi(); closeSearchDialog(); setRoute(item.kind==='plotThread'?'plot-grid':'workbench'); } }
       if(target.dataset.newEntry) openEntryEditor(target.dataset.newEntry);
       if(target.dataset.editEntry) openEntryEditor(null,target.dataset.editEntry);
+      if(target.dataset.closeDetail) setRoute(target.dataset.closeDetail);
       if(target.dataset.openEntry){ const e=entityById(target.dataset.openEntry); if(e) setRoute(target.dataset.openRoute||sectionForType(e.type),e.id); }
       if(target.dataset.toggleFavorite) await toggleFavorite(target.dataset.toggleFavorite);
       if(target.dataset.addRelation) openRelationEditor(target.dataset.addRelation);
       if(target.dataset.deleteRelation){ event.stopPropagation(); await deleteOne('relations',target.dataset.deleteRelation); await refreshState(); renderRoute(); toast('Link removed.'); }
       if(target.dataset.addMedia) openMediaEditor(target.dataset.addMedia,''); if(target.hasAttribute('data-upload-media')) openMediaEditor('',target.dataset.uploadMedia||'');
       if(target.dataset.deleteMedia){ const used=state.mapVersions.filter(v=>v.mediaId===target.dataset.deleteMedia); if(used.length) toast('This image is used by a map version. Delete that map version first.'); else if(confirm('Remove this media item from the private media library?')){ await deleteOne('media',target.dataset.deleteMedia); await refreshState(); renderRoute(); toast('Media removed.'); } }
-      if(target.dataset.globalResult){ $('#global-search').value=''; $('#search-popover').classList.add('hidden'); const e=entityById(target.dataset.globalResult); if(e)setRoute(sectionForType(e.type),e.id); }
+      if(target.dataset.globalResult){ clearSearchUi(); closeSearchDialog(); const e=entityById(target.dataset.globalResult); if(e)setRoute(sectionForType(e.type),e.id); }
       if(target.dataset.convertIdea) convertIdea(target.dataset.convertIdea);
       if(target.dataset.unarchiveEntry) await unarchiveEntry(target.dataset.unarchiveEntry);
       if(target.hasAttribute('data-add-clue')) openClueEditor(target.dataset.addClue||route().selected||'');

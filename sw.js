@@ -1,4 +1,4 @@
-const CACHE = 'unwritten-v3.0.0';
+const CACHE = 'unwritten-v3.0.1';
 const SHELL = [
   './', './index.html', './styles.css', './manifest.webmanifest', './assets/favicon.ico', './assets/unwritten-icon-32.png', './assets/unwritten-icon-180.png', './assets/unwritten-icon-192.png', './assets/unwritten-icon-512.png',
   './js/app.js',

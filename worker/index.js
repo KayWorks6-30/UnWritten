@@ -1,4 +1,3 @@
-import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { RELATION_TYPES, KNOWLEDGE_STATES, MAP_VARIANTS, WORKSPACE_KINDS, validateEntity } from '../js/domain/schema.js';
 import { migrateBackupData } from '../js/data/migrations.js';
 import { assertValidBackupSnapshot } from '../js/data/validation.js';
@@ -25,6 +24,7 @@ async function authenticate(request,env){
   if(!env.TEAM_DOMAIN||!env.POLICY_AUD) throw Object.assign(new Error('Cloudflare Access JWT validation is not configured. Set TEAM_DOMAIN and POLICY_AUD.'),{status:503});
   const token=request.headers.get('cf-access-jwt-assertion');
   if(!token) throw Object.assign(new Error('Missing Cloudflare Access JWT.'),{status:403});
+  const { createRemoteJWKSet, jwtVerify } = await import('jose');
   let jwks=JWKS_CACHE.get(env.TEAM_DOMAIN);
   if(!jwks){ jwks=createRemoteJWKSet(new URL(`${env.TEAM_DOMAIN.replace(/\/$/,'')}/cdn-cgi/access/certs`)); JWKS_CACHE.set(env.TEAM_DOMAIN,jwks); }
   let payload;
@@ -226,7 +226,7 @@ function revisionStatement(env,existing,identity){ if(!existing) return null; co
 export async function handleApi(request,env,identity){
   const url=new URL(request.url),path=url.pathname,method=request.method.toUpperCase();
   if(path==='/api/health'&&method==='GET'){
-    try{ const table=await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entities'").first(); if(!table) return json({ok:false,ready:false,error:'D1 migrations have not been applied.'},503); const counts=await env.DB.batch([env.DB.prepare('SELECT COUNT(*) AS n FROM entities'),env.DB.prepare('SELECT COUNT(*) AS n FROM media'),env.DB.prepare('SELECT COUNT(*) AS n FROM workspace')]); return json({ok:true,ready:true,app:'UnWritten',version:'3.0.0',storage:'Cloudflare D1 + private R2',entities:Number(counts[0]?.results?.[0]?.n||0),media:Number(counts[1]?.results?.[0]?.n||0),workspace:Number(counts[2]?.results?.[0]?.n||0),accessEmail:identity.email,role:identity.role}); }catch(e){ return error(`Storage is not ready: ${e.message}`,503); }
+    try{ const table=await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entities'").first(); if(!table) return json({ok:false,ready:false,error:'D1 migrations have not been applied.'},503); const counts=await env.DB.batch([env.DB.prepare('SELECT COUNT(*) AS n FROM entities'),env.DB.prepare('SELECT COUNT(*) AS n FROM media'),env.DB.prepare('SELECT COUNT(*) AS n FROM workspace')]); return json({ok:true,ready:true,app:'UnWritten',version:'3.0.1',storage:'Cloudflare D1 + private R2',entities:Number(counts[0]?.results?.[0]?.n||0),media:Number(counts[1]?.results?.[0]?.n||0),workspace:Number(counts[2]?.results?.[0]?.n||0),accessEmail:identity.email,role:identity.role}); }catch(e){ return error(`Storage is not ready: ${e.message}`,503); }
   }
   if(path==='/api/snapshot'&&method==='GET') return json({ok:true,...await snapshot(env)});
   const revisionRoute=path.match(/^\/api\/entities\/([^/]+)\/revisions$/); if(revisionRoute&&method==='GET') return json({ok:true,revisions:await readEntityRevisions(env,decodeURIComponent(revisionRoute[1]),url.searchParams.get('limit')||50)});

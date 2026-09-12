@@ -16,13 +16,19 @@
   <div class="app-shell">
     <aside class="sidebar" id="sidebar">
       <div class="brand-row">
-        <button class="icon-btn mobile-only" id="close-sidebar" aria-label="Close navigation">×</button>
+        <button class="icon-btn sidebar-collapse-control" id="close-sidebar" aria-label="Collapse navigation" title="Collapse navigation">☰</button>
         <img class="brand-icon" src="assets/unwritten-icon-192.png" alt="" width="36" height="36" />
-        <div>
+        <div class="brand-copy">
           <div class="eyebrow">PRIVATE WORKSPACE</div>
           <div class="brand">UnWritten</div>
         </div>
       </div>
+
+      <button class="sidebar-search-button" id="sidebar-search" type="button" aria-label="Search UnWritten">
+        <span class="sidebar-search-icon" aria-hidden="true">⌕</span>
+        <span>Search</span>
+        <kbd>Ctrl K</kbd>
+      </button>
 
       <nav class="primary-nav" aria-label="Primary">
         <a href="#/dashboard" data-route="dashboard">Dashboard</a>
@@ -58,7 +64,7 @@
 
     <div class="main-shell">
       <header class="topbar">
-        <button class="icon-btn mobile-only" id="open-sidebar" aria-label="Open navigation">☰</button>
+        <button class="icon-btn nav-reopen" id="open-sidebar" aria-label="Open navigation" title="Open navigation">☰</button>
         <div class="search-wrap">
           <span aria-hidden="true">⌕</span>
           <input id="global-search" type="search" placeholder="Search lore, notes, tags, chapters…" autocomplete="off" />
@@ -71,6 +77,18 @@
       <main id="main" class="main-content" tabindex="-1"></main>
     </div>
   </div>
+
+  <dialog id="search-dialog" class="search-dialog">
+    <div class="search-dialog-shell">
+      <div class="search-dialog-head">
+        <span class="search-dialog-icon" aria-hidden="true">⌕</span>
+        <input id="palette-search" type="search" placeholder="Search lore, notes, tags, chapters…" autocomplete="off" aria-label="Search UnWritten" />
+        <button type="button" class="icon-btn" id="close-search-dialog" aria-label="Close search">×</button>
+      </div>
+      <div class="muted small search-dialog-hint">Search everything, or start with <strong>&gt;</strong> for commands.</div>
+      <div class="search-dialog-results" id="palette-results"></div>
+    </div>
+  </dialog>
 
   <dialog id="entry-dialog" class="editor-dialog">
     <form method="dialog" id="entry-form">

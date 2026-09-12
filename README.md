@@ -1,8 +1,11 @@
-# UnWritten.KayWorks — V3.0.0
+# UnWritten.KayWorks — V3.0.1
 
 UnWritten.KayWorks is a private author workspace for canon, continuity, worldbuilding, plot planning, maps, story knowledge, and long-series organization.
 
 V3 keeps the V2 Cloudflare architecture and turns the application into a deeper narrative-intelligence workspace. The core design remains deliberately simple:
+
+V3.0.1 is a focused interface patch: the navigation can collapse, global search moves into a sidebar-accessible palette when the top toolbar has scrolled away, collection filters stay once at the top of the page, and opened lore records can be closed again and are automatically brought into view. Storage and story semantics are unchanged.
+
 
 ```text
 Browser
