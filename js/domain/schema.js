@@ -1,4 +1,4 @@
-export const APP_VERSION = '3.1.0';
+export const APP_VERSION = '3.1.1';
 export const SCHEMA_VERSION = 6;
 
 export const DATE_UNCERTAINTY = ['Exact','Approximate','Range','Traditional','Disputed','Unknown'];

@@ -6,7 +6,7 @@ import { APP_VERSION } from '../js/domain/schema.js';
 const root=new URL('../',import.meta.url);
 const read=async path=>readFile(new URL(path,root),'utf8');
 
-test('V3.1 identifies itself as 3.1.0',()=>{ assert.equal(APP_VERSION,'3.1.0'); });
+test('V3.1.1 identifies itself as 3.1.1',()=>{ assert.equal(APP_VERSION,'3.1.1'); });
 
 test('Wrangler binds the production D1 and R2 resources and disables alternate public endpoints',async()=>{
   const cfg=JSON.parse(await read('wrangler.jsonc'));

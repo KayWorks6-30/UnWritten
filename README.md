@@ -1,10 +1,10 @@
-# UnWritten.KayWorks — V3.1.0
+# UnWritten.KayWorks — V3.1.1
 
 UnWritten.KayWorks is a private author workspace for canon, continuity, worldbuilding, plot planning, maps, story knowledge, and long-series organization.
 
 V3 keeps the V2 Cloudflare architecture and turns the application into a deeper narrative-intelligence workspace. The core design remains deliberately simple:
 
-V3.1.0 adds character portraits on top of the existing private media library. Character entries can upload a primary portrait, promote an already-attached image to portrait, replace it, or remove the portrait assignment without deleting the media. The feature uses the existing D1 entity fields and R2 media storage, so no new database migration is required.
+V3.1.1 builds on character portraits on top of the existing private media library. Character entries can upload a primary portrait, promote an already-attached image to portrait, replace it, or remove the portrait assignment without deleting the media. The feature uses the existing D1 entity fields and R2 media storage, so no new database migration is required.
 
 
 ```text

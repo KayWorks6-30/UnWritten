@@ -24,7 +24,7 @@ for(const file of sourceFiles){
 const html=await readFile(join(root,'index.html'),'utf8');
 
 const sw=await readFile(join(root,'sw.js'),'utf8');
-if(!/const CACHE = ['"]unwritten-v3\.1\.0['"]/.test(sw)) errors.push('Service worker cache name must identify V3.1.0.');
+if(!/const CACHE = ['"]unwritten-v3\.1\.1['"]/.test(sw)) errors.push('Service worker cache name must identify V3.1.1.');
 const shell=new Set([...sw.matchAll(/['"](\.\/js\/[^'"]+\.js)['"]/g)].map(m=>m[1]));
 async function importGraph(entry,seen=new Set()){
   const absolute=resolve(root,entry); if(seen.has(absolute)) return seen; seen.add(absolute);

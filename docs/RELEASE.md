@@ -1,4 +1,4 @@
-# V3.1.0 Release Verification
+# V3.1.1 Release Verification
 
 ## Character portrait checks
 
@@ -8,7 +8,7 @@
 - Use **Remove as portrait** and confirm the media item remains in the gallery/library.
 - Confirm a media item cannot be deleted while it is assigned as a character portrait.
 - Export/restore a backup with a character portrait and confirm the portrait reference survives.
-- No D1 migration is required for V3.1.0.
+- No D1 migration is required for V3.1.1.
 
 
 ## Automated release gate
@@ -67,7 +67,7 @@ If a managed Chromium policy blocks loopback/local test origins, record that as 
 
 Owner:
 
-- health endpoint reports `3.1.0`, correct email and `owner`
+- health endpoint reports `3.1.1`, correct email and `owner`
 - old production content still loads
 - entity save/reload works
 - stale two-browser edit returns a conflict instead of silent overwrite

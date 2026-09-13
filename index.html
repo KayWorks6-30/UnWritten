@@ -10,7 +10,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="assets/unwritten-icon-32.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="assets/unwritten-icon-180.png" />
   <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="stylesheet" href="styles.css?v=3.1.0" />
+  <link rel="stylesheet" href="styles.css?v=3.1.1" />
 </head>
 <body>
   <div class="app-shell">
@@ -177,6 +177,20 @@
     </form>
   </dialog>
 
+  <dialog id="media-viewer-dialog" class="media-viewer-dialog" aria-labelledby="media-viewer-title">
+    <div class="media-viewer-shell">
+      <div class="media-viewer-header">
+        <div><div class="eyebrow">IMAGE VIEWER</div><h2 id="media-viewer-title">Image</h2><div id="media-viewer-count" class="muted small"></div></div>
+        <button type="button" class="icon-btn" id="close-media-viewer" aria-label="Close image viewer">×</button>
+      </div>
+      <div class="media-viewer-stage">
+        <button type="button" class="media-viewer-nav" id="media-viewer-prev" aria-label="Previous image">‹</button>
+        <img id="media-viewer-image" alt="" />
+        <button type="button" class="media-viewer-nav" id="media-viewer-next" aria-label="Next image">›</button>
+      </div>
+      <div class="muted small media-viewer-help">Use the arrows or your keyboard’s left/right arrow keys to move between images.</div>
+    </div>
+  </dialog>
 
 
   <dialog id="clue-dialog" class="small-dialog">

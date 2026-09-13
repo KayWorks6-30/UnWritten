@@ -29,3 +29,20 @@ test('collection pages use top filters, closable detail, results below, and auto
   assert.match(app,/detail\.scrollIntoView/);
   assert.doesNotMatch(app,/class="entry-layout/);
 });
+
+
+test('V3.1.1 media viewer, deity character visibility, archive concurrency fix, and persistent Wrangler vars are wired',async()=>{
+  const [app,index,css,wrangler]=await Promise.all([
+    readFile(new URL('../js/app.js',import.meta.url),'utf8'),
+    readFile(new URL('../index.html',import.meta.url),'utf8'),
+    readFile(new URL('../styles.css',import.meta.url),'utf8'),
+    readFile(new URL('../wrangler.jsonc',import.meta.url),'utf8')
+  ]);
+  assert.match(app,/types:\['character','deity'\]/);
+  assert.match(app,/data-view-media/);
+  assert.match(app,/data-media-size/);
+  assert.match(index,/id="media-viewer-dialog"/);
+  assert.match(css,/\.media-viewer-stage/);
+  assert.match(app,/baseUpdatedAt:state\.editorBaseUpdatedAt\|\|existing\.updatedAt/);
+  assert.match(wrangler,/"keep_vars"\s*:\s*true/);
+});

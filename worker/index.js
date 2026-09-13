@@ -113,7 +113,7 @@ async function validateRecord(env,store,r){
     if(r.type==='location') await assertNoParentCycle(env,r,'parentLocationId','location','Location');
     if(r.type==='map') await assertNoParentCycle(env,r,'parentMapId','map','Map');
     if(r.type==='trilogy') for(const id of f.protagonistIds||[]) await requireEntity(env,id,'character','Series protagonist');
-    if(r.type==='character'&&f.portraitMediaId&&!await rowExists(env,'media','id',f.portraitMediaId)) throw new Error('Character portrait media does not exist.');
+    if(['character','deity'].includes(r.type)&&f.portraitMediaId&&!await rowExists(env,'media','id',f.portraitMediaId)) throw new Error('Character portrait media does not exist.');
     return;
   }
   if(store==='relations'){
@@ -172,7 +172,7 @@ async function deleteMedia(env,id){
   const use=await env.DB.prepare('SELECT id FROM map_versions WHERE media_id=? LIMIT 1').bind(id).first(); if(use) throw new Error('This image is used by a map version. Delete that map version first.');
   const markerUse=await env.DB.prepare('SELECT id FROM map_markers WHERE custom_media_id=? LIMIT 1').bind(id).first(); if(markerUse) throw new Error('This image is used by a map marker. Remove that marker image first.');
   const layerRows=await env.DB.prepare("SELECT id,data_json FROM workspace WHERE kind='mapLayer'").all(); if((layerRows.results||[]).some(r=>safeJson(r.data_json,{}).mediaId===id)) throw new Error('This image is used by a map layer. Remove that layer first.');
-  const portraitUse=await env.DB.prepare("SELECT id,name FROM entities WHERE type='character' AND json_extract(fields_json,'$.portraitMediaId')=? LIMIT 1").bind(id).first(); if(portraitUse) throw new Error(`This image is the portrait for ${portraitUse.name||'a character'}. Remove it as the portrait first.`);
+  const portraitUse=await env.DB.prepare("SELECT id,name FROM entities WHERE type IN ('character','deity') AND json_extract(fields_json,'$.portraitMediaId')=? LIMIT 1").bind(id).first(); if(portraitUse) throw new Error(`This image is the portrait for ${portraitUse.name||'an entry'}. Remove it as the portrait first.`);
   const row=await env.DB.prepare('SELECT r2_key FROM media WHERE id=?').bind(id).first(); if(!row) return; await env.DB.batch([env.DB.prepare('DELETE FROM media WHERE id=?').bind(id)]); await moveR2ToTrash(env,row.r2_key);
 }
 
@@ -228,7 +228,7 @@ function revisionStatement(env,existing,identity){ if(!existing) return null; co
 export async function handleApi(request,env,identity){
   const url=new URL(request.url),path=url.pathname,method=request.method.toUpperCase();
   if(path==='/api/health'&&method==='GET'){
-    try{ const table=await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entities'").first(); if(!table) return json({ok:false,ready:false,error:'D1 migrations have not been applied.'},503); const counts=await env.DB.batch([env.DB.prepare('SELECT COUNT(*) AS n FROM entities'),env.DB.prepare('SELECT COUNT(*) AS n FROM media'),env.DB.prepare('SELECT COUNT(*) AS n FROM workspace')]); return json({ok:true,ready:true,app:'UnWritten',version:'3.1.0',storage:'Cloudflare D1 + private R2',entities:Number(counts[0]?.results?.[0]?.n||0),media:Number(counts[1]?.results?.[0]?.n||0),workspace:Number(counts[2]?.results?.[0]?.n||0),accessEmail:identity.email,role:identity.role}); }catch(e){ return error(`Storage is not ready: ${e.message}`,503); }
+    try{ const table=await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entities'").first(); if(!table) return json({ok:false,ready:false,error:'D1 migrations have not been applied.'},503); const counts=await env.DB.batch([env.DB.prepare('SELECT COUNT(*) AS n FROM entities'),env.DB.prepare('SELECT COUNT(*) AS n FROM media'),env.DB.prepare('SELECT COUNT(*) AS n FROM workspace')]); return json({ok:true,ready:true,app:'UnWritten',version:'3.1.1',storage:'Cloudflare D1 + private R2',entities:Number(counts[0]?.results?.[0]?.n||0),media:Number(counts[1]?.results?.[0]?.n||0),workspace:Number(counts[2]?.results?.[0]?.n||0),accessEmail:identity.email,role:identity.role}); }catch(e){ return error(`Storage is not ready: ${e.message}`,503); }
   }
   if(path==='/api/snapshot'&&method==='GET') return json({ok:true,...await snapshot(env)});
   const revisionRoute=path.match(/^\/api\/entities\/([^/]+)\/revisions$/); if(revisionRoute&&method==='GET') return json({ok:true,revisions:await readEntityRevisions(env,decodeURIComponent(revisionRoute[1]),url.searchParams.get('limit')||50)});

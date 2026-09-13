@@ -1,3 +1,12 @@
+## 3.1.1 — Media viewer, archive fix, beings in Characters
+
+- Ancient Being / God entries now appear in both World and Characters & Beings without changing their underlying lore type.
+- Ancient beings/gods can use the same primary portrait workflow as characters.
+- Attached images are clickable and open in a large modal viewer with previous/next navigation and keyboard arrows.
+- Images & media now has inline +/- thumbnail sizing controls, and thumbnails use contain sizing so artwork is not aggressively cropped.
+- Fixed Archive entry using a newly-generated editor timestamp as its optimistic-concurrency base, which could make the confirmation appear to do nothing.
+- Wrangler now sets `keep_vars: true` so dashboard-configured Access variables such as TEAM_DOMAIN, POLICY_AUD, and OWNER_EMAILS are preserved on normal deploys.
+
 ## 3.1.0 — Character portraits
 
 - Added an optional primary portrait to character lore entries.
