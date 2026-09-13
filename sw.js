@@ -1,6 +1,6 @@
-const CACHE = 'unwritten-v3.0.1';
+const CACHE = 'unwritten-v3.1.0';
 const SHELL = [
-  './', './index.html', './styles.css?v=3.0.1-sidebar-hotfix-2', './manifest.webmanifest', './assets/favicon.ico', './assets/unwritten-icon-32.png', './assets/unwritten-icon-180.png', './assets/unwritten-icon-192.png', './assets/unwritten-icon-512.png',
+  './', './index.html', './styles.css?v=3.1.0', './manifest.webmanifest', './assets/favicon.ico', './assets/unwritten-icon-32.png', './assets/unwritten-icon-180.png', './assets/unwritten-icon-192.png', './assets/unwritten-icon-512.png',
   './js/app.js',
   './js/data/db.js', './js/data/drafts.js', './js/data/legacy.js', './js/data/backup.js', './js/data/migrations.js', './js/data/validation.js', './js/data/zip.js', './js/data/markdown.js',
   './js/domain/schema.js', './js/domain/search.js', './js/domain/relations.js', './js/domain/timeline.js', './js/domain/story.js', './js/domain/graphs.js', './js/domain/intelligence.js',

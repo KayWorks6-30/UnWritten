@@ -1,3 +1,13 @@
+## 3.1.0 — Character portraits
+
+- Added an optional primary portrait to character lore entries.
+- Added a one-step portrait upload flow that reuses the private media library and automatically links the image to the character.
+- Existing attached character media can be promoted to the primary portrait without re-uploading it.
+- Portrait assignment can be removed without deleting the underlying media item.
+- Media deletion is blocked while an image is serving as a character portrait.
+- Backup and server validation now reject dangling character portrait media references.
+- No D1 migration is required; the portrait reference is stored in the existing character `fields` JSON.
+
 ## 3.0.1 — Navigation and entry-flow polish
 
 - Made the top toolbar non-sticky so global search/quick actions leave the viewport naturally while reading.

@@ -15,7 +15,7 @@ const snapshot={ok:true,entities:[
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.webmanifest':'application/manifest+json','.png':'image/png','.svg':'image/svg+xml'};
 function safePath(urlPath){const rel=decodeURIComponent(urlPath.split('?')[0]).replace(/^\/+/, '')||'index.html';const full=resolve(root,normalize(rel));return full.startsWith(root)?full:null;}
 const server=http.createServer(async(req,res)=>{try{const u=new URL(req.url,'http://local.test');
-  if(u.pathname==='/api/health'){res.writeHead(200,{'content-type':'application/json'});return res.end(JSON.stringify({ok:true,ready:true,app:'UnWritten',version:'3.0.1',role:'owner',accessEmail:'owner@local.test'}));}
+  if(u.pathname==='/api/health'){res.writeHead(200,{'content-type':'application/json'});return res.end(JSON.stringify({ok:true,ready:true,app:'UnWritten',version:'3.1.0',role:'owner',accessEmail:'owner@local.test'}));}
   if(u.pathname==='/api/snapshot'){res.writeHead(200,{'content-type':'application/json'});return res.end(JSON.stringify(snapshot));}
   if(u.pathname==='/api/media/media-1/content'){res.writeHead(200,{'content-type':'image/png','cache-control':'no-store'});return res.end(png);}
   if(u.pathname.startsWith('/api/')){res.writeHead(404,{'content-type':'application/json'});return res.end(JSON.stringify({ok:false,error:'not implemented in browser smoke'}));}

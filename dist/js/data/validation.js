@@ -95,6 +95,7 @@ export function validateBackupSnapshot(data) {
     ];
     for(const [key,types] of refs){ const ref=f[key]; if(!ref) continue; if((key==='parentLocationId'||key==='parentMapId')&&ref===entity.id){errors.push(`Entity ${entity.id}: ${key} cannot point to itself.`);continue;} expectEntity(entityById,ref,types,`Entity ${entity.id}: ${key}`,errors); }
     if(entity?.type==='trilogy'){ if(f.protagonistIds!==undefined&&!Array.isArray(f.protagonistIds)) errors.push(`Entity ${entity.id}: protagonistIds must be an array.`); for(const ref of f.protagonistIds||[]) expectEntity(entityById,ref,['character'],`Entity ${entity.id}: protagonistIds`,errors); }
+    if(entity?.type==='character'&&f.portraitMediaId&&!mediaIds.has(f.portraitMediaId)) errors.push(`Entity ${entity.id}: portraitMediaId references missing media ${f.portraitMediaId}.`);
   }
   errors.push(...cycleErrors(data.entities,'parentLocationId','location','Location'),...cycleErrors(data.entities,'parentMapId','map','Map'));
 

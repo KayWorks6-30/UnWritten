@@ -75,3 +75,10 @@ test('ZIP reader detects payload corruption with CRC validation',async()=>{
   bytes[payloadOffset]^=0xff;
   await assert.rejects(()=>readZip(new Blob([bytes],{type:'application/zip'})),/CRC/i);
 });
+
+
+test('backup validator rejects a character portrait that references missing media',()=>{
+  const snapshot=validSnapshot();
+  snapshot.entities.push({id:'char-portrait',type:'character',name:'Portrait Character',status:'Canon',tags:[],favorite:false,fields:{portraitMediaId:'missing-media'},summary:'',notes:'',archivedAt:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
+  assert.match(validateBackupSnapshot(snapshot).join(' '),/portraitMediaId references missing media/i);
+});

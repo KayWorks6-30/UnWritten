@@ -15,7 +15,7 @@ import { continuityWarnings } from './domain/intelligence.js';
 const state = {
   entities: [], relations: [], media: [], settings: {}, clues: [], reveals: [], knowledge: [], mapVersions: [], mapMarkers: [], workspace: [],
   editorEntity: null, editorBaseUpdatedAt: null, conversionSourceId: null, selectedId: null, selectedMapVersionId: null, markerPlacementLocationId: null, mapZoom: 100,
-  mediaObjectUrls: new Map(), drafts: [], storageStatus: null, legacyAvailable: false, collectionFilters: {}
+  mediaObjectUrls: new Map(), drafts: [], storageStatus: null, legacyAvailable: false, collectionFilters: {}, pendingPortraitEntityId: null
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -154,6 +154,7 @@ function renderEntryDetail(entity,routeName='entries'){
   const specialActions=[entity.type==='idea'&&entity.status!=='Converted'?`<button class="button primary" data-convert-idea="${esc(entity.id)}">Convert to entry</button>`:'',entity.type==='mystery'?`<button class="button" data-add-clue="${esc(entity.id)}">+ Clue</button><button class="button" data-add-reveal="${esc(entity.id)}">+ Reveal</button>`:'',entity.archivedAt?`<button class="button" data-unarchive-entry="${esc(entity.id)}">Restore</button>`:''].join('');
   return `${entity.archivedAt?'<div class="archive-banner">This entry is archived. It remains in backups and can be restored or permanently deleted.</div>':''}${hierarchyBreadcrumb(entity)}
     <div class="detail-head"><div><div class="eyebrow">${esc(def?.group||'ENTRY')} • ${esc(def?.label||entity.type)}</div><h2>${esc(entity.name)}</h2><div class="badges">${badge(entity.status)}${(entity.tags||[]).map(t=>`<span class="badge">#${esc(t)}</span>`).join('')}</div></div><div class="actions">${specialActions}<button class="button ghost" data-toggle-favorite="${esc(entity.id)}">${entity.favorite?'★ Favorited':'☆ Favorite'}</button><button class="button" data-edit-entry="${esc(entity.id)}">Edit</button><button class="button ghost detail-close" data-close-detail="${esc(routeName)}" aria-label="Close ${esc(entity.name)} details">Close</button></div></div>
+    ${entity.type==='character'?renderCharacterPortrait(entity,linkedMedia):''}
     ${entity.summary?`<section class="detail-section"><h3>Summary</h3><div class="prose">${text(entity.summary)}</div></section>`:''}
     ${knowledgeFields.length?`<section class="detail-section"><h3>Knowledge layers</h3><div class="knowledge-grid">${knowledgeFields.map(f=>`<div class="knowledge-card"><h4>${esc(f.label)}</h4><div class="prose">${text(entity.fields[f.key])}</div></div>`).join('')}</div></section>`:''}
     ${detailFields.map(f=>`<section class="detail-section"><h3>${esc(f.label)}</h3>${displayFieldValue(f,entity.fields[f.key],routeName)}</section>`).join('')}
@@ -163,7 +164,7 @@ function renderEntryDetail(entity,routeName='entries'){
     ${entity.notes?`<section class="detail-section"><h3>Author Notes</h3><div class="prose">${text(entity.notes)}</div></section>`:''}
     ${v3().renderEntryEnhancements(entity)}
     <section class="detail-section"><div class="section-title"><h3>Related entries</h3><button class="button ghost" data-add-relation="${esc(entity.id)}">+ Link entry</button></div><div class="list">${relatedHtml||'<div class="muted small">No structured links yet.</div>'}</div></section>
-    <section class="detail-section"><div class="section-title"><h3>Images & media</h3><button class="button ghost" data-add-media="${esc(entity.id)}">+ Attach media</button></div>${renderMiniMedia(linkedMedia)}</section>
+    <section class="detail-section"><div class="section-title"><h3>Images & media</h3><button class="button ghost" data-add-media="${esc(entity.id)}">+ Attach media</button></div>${renderMiniMedia(linkedMedia,entity)}</section>
     <section class="detail-section"><div class="muted small">Created ${esc(fmtDate(entity.createdAt))} • Last edited ${esc(fmtDate(entity.updatedAt))}</div></section>`;
 }
 
@@ -196,7 +197,15 @@ function createMapForLocation(locationId){
   openEntryEditor('map',null,map);
 }
 
-function renderMiniMedia(media){ if(!media.length) return '<div class="muted small">No media attached.</div>'; return `<div class="media-grid">${media.map(item=>{const src=mediaUrl(item);return `<div class="media-card">${src?`<img src="${src}" alt="${esc(item.title||item.name||'Attached image')}" />`:''}<div class="media-card-body"><strong>${esc(item.title||item.name)}</strong><div class="muted small">${(item.tags||[]).map(t=>`#${esc(t)}`).join(' ')}</div></div></div>`;}).join('')}</div>`; }
+function renderCharacterPortrait(character,linkedMedia){
+  const portraitId=character.fields?.portraitMediaId||'';
+  const portrait=linkedMedia.find(item=>item.id===portraitId)||state.media.find(item=>item.id===portraitId);
+  if(!portrait) return `<section class="detail-section character-portrait-section"><div class="section-title"><div><h3>Portrait</h3><div class="muted small">Add a primary character image. It stays in the private media library and can also appear in the gallery below.</div></div><button class="button primary" data-add-portrait="${esc(character.id)}">+ Add portrait</button></div></section>`;
+  const src=mediaUrl(portrait);
+  return `<section class="detail-section character-portrait-section"><div class="character-portrait-card">${src?`<img class="character-portrait-image" src="${src}" alt="Portrait of ${esc(character.name)}" />`:''}<div class="character-portrait-copy"><div class="eyebrow">CHARACTER PORTRAIT</div><h3>${esc(portrait.title||portrait.name||character.name)}</h3><div class="muted small">Primary image for ${esc(character.name)}.</div><div class="actions portrait-actions"><button class="button" data-add-portrait="${esc(character.id)}">Replace portrait</button><button class="button ghost" data-clear-portrait="${esc(character.id)}">Remove as portrait</button></div></div></div></section>`;
+}
+
+function renderMiniMedia(media,entity=null){ if(!media.length) return '<div class="muted small">No media attached.</div>'; const portraitId=entity?.type==='character'?entity.fields?.portraitMediaId||'':''; return `<div class="media-grid">${media.map(item=>{const src=mediaUrl(item);const isPortrait=item.id===portraitId;return `<div class="media-card ${isPortrait?'is-portrait':''}">${src?`<img src="${src}" alt="${esc(item.title||item.name||'Attached image')}" />`:''}<div class="media-card-body"><strong>${esc(item.title||item.name)}</strong><div class="muted small">${(item.tags||[]).map(t=>`#${esc(t)}`).join(' ')}</div>${entity?.type==='character'?`<div class="media-card-actions">${isPortrait?'<span class="badge canon">Portrait</span>':`<button class="button ghost compact-button" data-set-portrait="${esc(entity.id)}" data-portrait-media="${esc(item.id)}">Use as portrait</button>`}</div>`:''}</div></div>`;}).join('')}</div>`; }
 
 function renderTimeline(){
   const events=activeEntities().filter(e=>e.type==='event'),eras=activeEntities().filter(e=>e.type==='era').sort((a,b)=>a.name.localeCompare(b.name));
@@ -353,7 +362,7 @@ function applyRoleUi(){
   document.body.dataset.role=reviewer?'reviewer':'owner';
   if(reviewer){
     $('#quick-add')?.classList.add('hidden');
-    main.querySelectorAll('[data-new-entry],[data-edit-entry],[data-command],[data-workspace-result],[data-add-plot-beat],[data-delete-workspace],[data-toggle-workspace],[data-open-saved-view],[data-add-whiteboard-node],[data-convert-note],[data-generate-name],[data-toggle-focus],[data-export-manuscript],[data-suggest-link-from],[data-restore-revision],[data-toggle-favorite],[data-add-relation],[data-delete-relation],[data-add-media],[data-upload-media],[data-delete-media],[data-convert-idea],[data-unarchive-entry],[data-add-clue],[data-delete-clue],[data-add-reveal],[data-delete-reveal],[data-add-knowledge],[data-add-knowledge-for],[data-delete-knowledge],[data-add-map-version],[data-delete-map-version],[data-delete-marker],[data-new-map-for],form button[type="submit"],#import-backup,#import-legacy-db').forEach(el=>el.classList.add('hidden'));
+    main.querySelectorAll('[data-new-entry],[data-edit-entry],[data-command],[data-workspace-result],[data-add-plot-beat],[data-delete-workspace],[data-toggle-workspace],[data-open-saved-view],[data-add-whiteboard-node],[data-convert-note],[data-generate-name],[data-toggle-focus],[data-export-manuscript],[data-suggest-link-from],[data-restore-revision],[data-toggle-favorite],[data-add-relation],[data-delete-relation],[data-add-media],[data-add-portrait],[data-set-portrait],[data-clear-portrait],[data-upload-media],[data-delete-media],[data-convert-idea],[data-unarchive-entry],[data-add-clue],[data-delete-clue],[data-add-reveal],[data-delete-reveal],[data-add-knowledge],[data-add-knowledge-for],[data-delete-knowledge],[data-add-map-version],[data-delete-map-version],[data-delete-marker],[data-new-map-for],form button[type="submit"],#import-backup,#import-legacy-db').forEach(el=>el.classList.add('hidden'));
   }
 }
 
@@ -406,8 +415,32 @@ async function saveEntity(event){
 function sectionForType(type){ if(type==='character') return 'characters'; if(type==='location') return 'geography'; if(type==='map') return 'maps'; if(['event','era'].includes(type)) return 'history'; if(['book','chapter','scene','trilogy'].includes(type)) return 'story'; if(['mystery','foreshadowing'].includes(type)) return 'mysteries'; if(type==='idea') return 'ideas'; if(type==='question') return 'questions'; return 'world'; }
 function openRelationEditor(fromId){ $('#relation-from').value=fromId; $('#relation-type').innerHTML=RELATION_TYPES.map(r=>`<option value="${esc(r)}">${esc(r.replaceAll('_',' '))}</option>`).join(''); $('#relation-to').innerHTML=entityOptions(null,'',fromId); $('#relation-era').innerHTML='<option value="">Any / current</option>'+entityOptions(['era'],'',''); $('#relation-active-from').value=''; $('#relation-active-to').value=''; $('#relation-note').value=''; relationDialog.showModal(); }
 async function saveRelation(event){ event.preventDefault(); const relation={id:id(),fromId:$('#relation-from').value,toId:$('#relation-to').value,type:$('#relation-type').value,note:$('#relation-note').value.trim(),eraId:$('#relation-era').value||null,activeFrom:$('#relation-active-from').value.trim(),activeTo:$('#relation-active-to').value.trim(),createdAt:now(),updatedAt:now()}; const errors=validateRelation(relation); if(errors.length) return toast(errors[0]); await putOne('relations',relation); relationDialog.close(); await refreshState(); renderRoute(); toast('Link added.'); }
-function openMediaEditor(preselectEntityId='',defaultTag=''){ $('#media-form').reset(); $('#media-tags').value=defaultTag; $('#media-entries').innerHTML=activeEntities().sort((a,b)=>a.name.localeCompare(b.name)).map(e=>`<option value="${esc(e.id)}" ${e.id===preselectEntityId?'selected':''}>${esc(e.name)} — ${esc(typeLabel(e.type))}</option>`).join(''); mediaDialog.showModal(); }
-async function saveMedia(event){ event.preventDefault(); const file=$('#media-file').files[0]; if(!file) return; await putOne('media',{id:id(),name:file.name,title:$('#media-title').value.trim()||file.name,mime:file.type,size:file.size,blob:file,tags:$('#media-tags').value.split(',').map(t=>t.trim().replace(/^#/,'')).filter(Boolean),entityIds:[...$('#media-entries').selectedOptions].map(o=>o.value),createdAt:now()}); mediaDialog.close(); await refreshState(); renderRoute(); toast('Media added.'); }
+function openMediaEditor(preselectEntityId='',defaultTag='',portraitEntityId=null){
+  $('#media-form').reset(); state.pendingPortraitEntityId=portraitEntityId;
+  $('#media-dialog-title').textContent=portraitEntityId?'Add character portrait':'Add media';
+  $('#media-tags').value=portraitEntityId?'portrait':defaultTag;
+  $('#media-entries').innerHTML=activeEntities().sort((a,b)=>a.name.localeCompare(b.name)).map(e=>`<option value="${esc(e.id)}" ${e.id===preselectEntityId?'selected':''}>${esc(e.name)} — ${esc(typeLabel(e.type))}</option>`).join('');
+  mediaDialog.showModal();
+}
+async function setCharacterPortrait(characterId,mediaId){
+  const character=entityById(characterId),media=state.media.find(item=>item.id===mediaId); if(!character||character.type!=='character'||!media) return;
+  if(!(media.entityIds||[]).includes(characterId)) return toast('Attach the image to this character before using it as the portrait.');
+  const updated={...character,fields:{...(character.fields||{}),portraitMediaId:mediaId},updatedAt:now()};
+  await putOne('entities',updated,{baseUpdatedAt:character.updatedAt}); await refreshState(); renderRoute(); toast('Character portrait updated.');
+}
+async function clearCharacterPortrait(characterId){
+  const character=entityById(characterId); if(!character||character.type!=='character') return;
+  const fields={...(character.fields||{})}; delete fields.portraitMediaId;
+  await putOne('entities',{...character,fields,updatedAt:now()},{baseUpdatedAt:character.updatedAt}); await refreshState(); renderRoute(); toast('Portrait removed. The image is still in the media library.');
+}
+async function saveMedia(event){
+  event.preventDefault(); const file=$('#media-file').files[0]; if(!file) return;
+  const mediaId=id(),portraitEntityId=state.pendingPortraitEntityId;
+  const entityIds=[...$('#media-entries').selectedOptions].map(o=>o.value); if(portraitEntityId&&!entityIds.includes(portraitEntityId)) entityIds.push(portraitEntityId);
+  await putOne('media',{id:mediaId,name:file.name,title:$('#media-title').value.trim()||file.name,mime:file.type,size:file.size,blob:file,tags:$('#media-tags').value.split(',').map(t=>t.trim().replace(/^#/,'' )).filter(Boolean),entityIds,createdAt:now()});
+  if(portraitEntityId){ const character=entityById(portraitEntityId); if(character) await putOne('entities',{...character,fields:{...(character.fields||{}),portraitMediaId:mediaId},updatedAt:now()},{baseUpdatedAt:character.updatedAt}); }
+  state.pendingPortraitEntityId=null; mediaDialog.close(); await refreshState(); renderRoute(); toast(portraitEntityId?'Portrait added.':'Media added.');
+}
 
 async function quickIdea(event){ event.preventDefault(); const input=$('#quick-idea'),value=input.value.trim(); if(!value) return; const entity=createEmptyEntity('idea'); entity.name=value.length>64?`${value.slice(0,61)}…`:value; entity.summary=value; entity.fields.idea=value; await putOne('entities',entity); input.value=''; await refreshState(); renderDashboard(); toast('Idea captured.'); }
 async function toggleFavorite(entityId){ const entity=entityById(entityId); if(!entity) return; await putOne('entities',{...entity,favorite:!entity.favorite,updatedAt:now()},{baseUpdatedAt:entity.updatedAt}); await refreshState(); renderRoute(); }
@@ -462,7 +495,7 @@ function bindStaticEvents(){
   $('#quick-add').addEventListener('click',()=>openEntryEditor('lore')); $('#random-entry').addEventListener('click',()=>{ const pool=activeEntities(); if(!pool.length) return toast('Create an entry first.'); const pick=pool[Math.floor(Math.random()*pool.length)]; setRoute(sectionForType(pick.type),pick.id); });
   $('#entry-form').addEventListener('submit',saveEntity); $('#close-entry-dialog').addEventListener('click',()=>entryDialog.close()); $('#cancel-entry').addEventListener('click',()=>entryDialog.close()); $('#archive-entry').addEventListener('click',archiveCurrentEntity); $('#delete-entry').addEventListener('click',deleteEntityConfirmed);
   $('#relation-form').addEventListener('submit',saveRelation); $('#close-relation-dialog').addEventListener('click',()=>relationDialog.close()); $('#cancel-relation').addEventListener('click',()=>relationDialog.close());
-  $('#media-form').addEventListener('submit',saveMedia); $('#close-media-dialog').addEventListener('click',()=>mediaDialog.close()); $('#cancel-media').addEventListener('click',()=>mediaDialog.close());
+  $('#media-form').addEventListener('submit',saveMedia); $('#close-media-dialog').addEventListener('click',()=>{state.pendingPortraitEntityId=null;mediaDialog.close();}); $('#cancel-media').addEventListener('click',()=>{state.pendingPortraitEntityId=null;mediaDialog.close();});
   $('#clue-form').addEventListener('submit',saveClue); $('#close-clue-dialog').addEventListener('click',()=>clueDialog.close()); $('#cancel-clue').addEventListener('click',()=>clueDialog.close());
   $('#reveal-form').addEventListener('submit',saveReveal); $('#close-reveal-dialog').addEventListener('click',()=>revealDialog.close()); $('#cancel-reveal').addEventListener('click',()=>revealDialog.close());
   $('#knowledge-form').addEventListener('submit',saveKnowledge); $('#close-knowledge-dialog').addEventListener('click',()=>knowledgeDialog.close()); $('#cancel-knowledge').addEventListener('click',()=>knowledgeDialog.close()); $('#knowledge-kind').addEventListener('input',e=>$('#knowledge-knower-wrap').classList.toggle('hidden',e.target.value==='reader'));
@@ -473,7 +506,7 @@ function bindStaticEvents(){
   document.addEventListener('keydown',event=>{ if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='k'){ event.preventDefault(); openSearchDialog(); } if((event.key==='Enter'||event.key===' ')&&event.target.matches?.('.graph-click')){ event.preventDefault(); const e=entityById(event.target.dataset.openEntry); if(e) setRoute(event.target.dataset.openRoute||sectionForType(e.type),e.id); } });
 
   document.addEventListener('click',async event=>{
-    const target=event.target.closest('[data-new-entry],[data-edit-entry],[data-close-detail],[data-command],[data-workspace-result],[data-add-plot-beat],[data-delete-workspace],[data-toggle-workspace],[data-open-saved-view],[data-add-whiteboard-node],[data-convert-note],[data-generate-name],[data-toggle-focus],[data-export-manuscript],[data-suggest-link-from],[data-restore-revision],[data-open-entry],[data-toggle-favorite],[data-add-relation],[data-delete-relation],[data-add-media],[data-upload-media],[data-delete-media],[data-global-result],[data-convert-idea],[data-unarchive-entry],[data-add-clue],[data-delete-clue],[data-add-reveal],[data-delete-reveal],[data-add-knowledge],[data-add-knowledge-for],[data-delete-knowledge],[data-add-map-version],[data-map-version],[data-delete-map-version],[data-delete-marker],[data-open-map],[data-zoom-map],[data-new-map-for],[data-recover-draft],[data-discard-draft]');
+    const target=event.target.closest('[data-new-entry],[data-edit-entry],[data-close-detail],[data-command],[data-workspace-result],[data-add-plot-beat],[data-delete-workspace],[data-toggle-workspace],[data-open-saved-view],[data-add-whiteboard-node],[data-convert-note],[data-generate-name],[data-toggle-focus],[data-export-manuscript],[data-suggest-link-from],[data-restore-revision],[data-open-entry],[data-toggle-favorite],[data-add-relation],[data-delete-relation],[data-add-media],[data-add-portrait],[data-set-portrait],[data-clear-portrait],[data-upload-media],[data-delete-media],[data-global-result],[data-convert-idea],[data-unarchive-entry],[data-add-clue],[data-delete-clue],[data-add-reveal],[data-delete-reveal],[data-add-knowledge],[data-add-knowledge-for],[data-delete-knowledge],[data-add-map-version],[data-map-version],[data-delete-map-version],[data-delete-marker],[data-open-map],[data-zoom-map],[data-new-map-for],[data-recover-draft],[data-discard-draft]');
     if(target){
       if(await v3().handleClick(target)) return;
       if(target.dataset.command){ const [kind,value]=target.dataset.command.split(':'); clearSearchUi(); closeSearchDialog(); if(kind==='new')openEntryEditor(value); if(kind==='route')setRoute(value); if(kind==='action'&&value==='export-zip')await exportZipAction(); }
@@ -485,8 +518,8 @@ function bindStaticEvents(){
       if(target.dataset.toggleFavorite) await toggleFavorite(target.dataset.toggleFavorite);
       if(target.dataset.addRelation) openRelationEditor(target.dataset.addRelation);
       if(target.dataset.deleteRelation){ event.stopPropagation(); await deleteOne('relations',target.dataset.deleteRelation); await refreshState(); renderRoute(); toast('Link removed.'); }
-      if(target.dataset.addMedia) openMediaEditor(target.dataset.addMedia,''); if(target.hasAttribute('data-upload-media')) openMediaEditor('',target.dataset.uploadMedia||'');
-      if(target.dataset.deleteMedia){ const used=state.mapVersions.filter(v=>v.mediaId===target.dataset.deleteMedia); if(used.length) toast('This image is used by a map version. Delete that map version first.'); else if(confirm('Remove this media item from the private media library?')){ await deleteOne('media',target.dataset.deleteMedia); await refreshState(); renderRoute(); toast('Media removed.'); } }
+      if(target.dataset.addMedia) openMediaEditor(target.dataset.addMedia,''); if(target.dataset.addPortrait) openMediaEditor(target.dataset.addPortrait,'portrait',target.dataset.addPortrait); if(target.dataset.setPortrait) await setCharacterPortrait(target.dataset.setPortrait,target.dataset.portraitMedia); if(target.dataset.clearPortrait) await clearCharacterPortrait(target.dataset.clearPortrait); if(target.hasAttribute('data-upload-media')) openMediaEditor('',target.dataset.uploadMedia||'');
+      if(target.dataset.deleteMedia){ const used=state.mapVersions.filter(v=>v.mediaId===target.dataset.deleteMedia),portraitUsers=state.entities.filter(e=>e.type==='character'&&e.fields?.portraitMediaId===target.dataset.deleteMedia); if(used.length) toast('This image is used by a map version. Delete that map version first.'); else if(portraitUsers.length) toast(`This image is the portrait for ${portraitUsers.map(e=>e.name).join(', ')}. Remove it as the portrait first.`); else if(confirm('Remove this media item from the private media library?')){ await deleteOne('media',target.dataset.deleteMedia); await refreshState(); renderRoute(); toast('Media removed.'); } }
       if(target.dataset.globalResult){ clearSearchUi(); closeSearchDialog(); const e=entityById(target.dataset.globalResult); if(e)setRoute(sectionForType(e.type),e.id); }
       if(target.dataset.convertIdea) convertIdea(target.dataset.convertIdea);
       if(target.dataset.unarchiveEntry) await unarchiveEntry(target.dataset.unarchiveEntry);
