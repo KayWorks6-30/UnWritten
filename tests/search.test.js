@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { searchEntities, uniqueTags } from '../js/domain/search.js';
+import { searchEntities, sortEntities, uniqueTags } from '../js/domain/search.js';
 
 const entities = [
   { id:'1', type:'event', name:'Fall of Orra', summary:'Ancient collapse', status:'Canon', tags:['ancient','major-reveal'], fields:{authorTruth:'The archive was destroyed intentionally.'}, notes:'', updatedAt:'2026-01-02' },
@@ -20,4 +20,19 @@ test('search supports type/status/tag filtering', () => {
 
 test('uniqueTags is stable and deduplicated', () => {
   assert.deepEqual(uniqueTags(entities), ['ancient','book-one','major-reveal']);
+});
+
+test('search supports multiple tags with all/any matching', () => {
+  const rows=[
+    ...entities,
+    {id:'3',type:'character',name:'Seven',summary:'',status:'Canon',tags:['ancient','book-one'],fields:{},notes:'',updatedAt:'2026-01-04'}
+  ];
+  assert.deepEqual(searchEntities(rows,'',{tags:['ancient','book-one'],tagMode:'all'}).map(e=>e.id),['3']);
+  assert.deepEqual(new Set(searchEntities(rows,'',{tags:['ancient','book-one'],tagMode:'any'}).map(e=>e.id)),new Set(['1','2','3']));
+});
+
+test('sortEntities supports character-library organization modes', () => {
+  const rows=[{name:'Zed',updatedAt:'2026-01-01',favorite:false},{name:'Ada',updatedAt:'2026-01-03',favorite:true},{name:'Mara',updatedAt:'2026-01-02',favorite:false}];
+  assert.deepEqual(sortEntities(rows,'name-asc').map(e=>e.name),['Ada','Mara','Zed']);
+  assert.equal(sortEntities(rows,'favorites')[0].name,'Ada');
 });

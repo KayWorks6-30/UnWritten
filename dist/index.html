@@ -10,7 +10,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="assets/unwritten-icon-32.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="assets/unwritten-icon-180.png" />
   <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="stylesheet" href="styles.css?v=3.1.1" />
+  <link rel="stylesheet" href="styles.css?v=3.2.0" />
 </head>
 <body>
   <div class="app-shell">
@@ -185,10 +185,22 @@
       </div>
       <div class="media-viewer-stage">
         <button type="button" class="media-viewer-nav" id="media-viewer-prev" aria-label="Previous image">‹</button>
-        <img id="media-viewer-image" alt="" />
+        <div class="media-viewer-canvas" id="media-viewer-canvas">
+          <div class="media-viewer-zoom-plane" id="media-viewer-zoom-plane">
+            <img id="media-viewer-image" alt="" />
+          </div>
+        </div>
         <button type="button" class="media-viewer-nav" id="media-viewer-next" aria-label="Next image">›</button>
       </div>
-      <div class="muted small media-viewer-help">Use the arrows or your keyboard’s left/right arrow keys to move between images.</div>
+      <div class="media-viewer-footer">
+        <div class="media-viewer-zoom-controls" aria-label="Image zoom controls">
+          <button type="button" class="button ghost compact-button" id="media-viewer-zoom-out" aria-label="Zoom out">−</button>
+          <span id="media-viewer-zoom-label" class="muted small">100%</span>
+          <button type="button" class="button ghost compact-button" id="media-viewer-zoom-in" aria-label="Zoom in">+</button>
+          <button type="button" class="button ghost compact-button" id="media-viewer-zoom-reset">Fit</button>
+        </div>
+        <div class="muted small media-viewer-help">Use the arrows or your keyboard’s left/right arrow keys to move between images. Zoom up to 400% and scroll around the image.</div>
+      </div>
     </div>
   </dialog>
 

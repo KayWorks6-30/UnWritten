@@ -1,3 +1,22 @@
+## 3.2.0 — Multi-tag search and organized character library
+
+- Added searchable multi-tag filtering across lore collection pages.
+- Added Match All / Match Any behavior for selected tags.
+- Added tag-name search so large tag vocabularies remain usable.
+- Added persistent per-section sort, grouping, and view preferences.
+- Characters & Beings now defaults to an A–Z grouped card library with portraits when available.
+- Added compact-list/card switching, favorite-first and date/name sorting, plus type/status/A–Z grouping.
+- No database migration is required.
+
+## 3.1.2 — Portrait layout and media controls polish
+
+- Fixed promoted character/deity portraits so the portrait image stays inside its column instead of overlapping the title and portrait controls.
+- Added zoom controls to the full-screen image viewer from 100% through 400%, with a Fit reset and scrollable zoomed canvas.
+- Replaced the page-wide media size control with per-image size controls above each attached image.
+- Per-image resizing updates in place instead of rerendering the lore page, so using the size buttons no longer jumps the user back to the top.
+- Kept the V3.1.1 archive correction and permanent Wrangler `keep_vars` behavior unchanged.
+- No D1 migration is required.
+
 ## 3.1.1 — Media viewer, archive fix, beings in Characters
 
 - Ancient Being / God entries now appear in both World and Characters & Beings without changing their underlying lore type.

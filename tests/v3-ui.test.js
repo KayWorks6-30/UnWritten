@@ -31,7 +31,7 @@ test('collection pages use top filters, closable detail, results below, and auto
 });
 
 
-test('V3.1.1 media viewer, deity character visibility, archive concurrency fix, and persistent Wrangler vars are wired',async()=>{
+test('V3.2.0 portrait layout, per-image sizing, viewer zoom, archive fix, and persistent Wrangler vars are wired',async()=>{
   const [app,index,css,wrangler]=await Promise.all([
     readFile(new URL('../js/app.js',import.meta.url),'utf8'),
     readFile(new URL('../index.html',import.meta.url),'utf8'),
@@ -40,9 +40,30 @@ test('V3.1.1 media viewer, deity character visibility, archive concurrency fix, 
   ]);
   assert.match(app,/types:\['character','deity'\]/);
   assert.match(app,/data-view-media/);
-  assert.match(app,/data-media-size/);
+  assert.match(app,/data-media-card-size/);
+  assert.match(app,/adjustMediaCardSize/);
+  assert.match(app,/setMediaViewerZoom/);
   assert.match(index,/id="media-viewer-dialog"/);
+  assert.match(index,/id="media-viewer-zoom-in"/);
+  assert.match(index,/id="media-viewer-zoom-reset"/);
   assert.match(css,/\.media-viewer-stage/);
+  assert.match(css,/\.media-viewer-zoom-plane/);
+  assert.match(css,/\.character-portrait-preview img \{[^}]*width: 100%/s);
   assert.match(app,/baseUpdatedAt:state\.editorBaseUpdatedAt\|\|existing\.updatedAt/);
   assert.match(wrangler,/"keep_vars"\s*:\s*true/);
+});
+
+test('V3.2.0 collection discovery supports searchable multi-tag filters and organization preferences',async()=>{
+  const [app,css]=await Promise.all([read('js/app.js'),read('styles.css')]);
+  assert.match(app,/id="collection-tag-search"/);
+  assert.match(app,/id="collection-tag-mode"/);
+  assert.match(app,/Match all selected/);
+  assert.match(app,/Match any selected/);
+  assert.match(app,/id="collection-sort"/);
+  assert.match(app,/id="collection-group"/);
+  assert.match(app,/id="collection-view"/);
+  assert.match(app,/unwritten\.collectionPreferences/);
+  assert.match(app,/routeName==='characters'[\s\S]*sort:'name-asc',group:'alpha',view:'cards'/);
+  assert.match(css,/\.collection-card-grid/);
+  assert.match(css,/\.tag-picker-options/);
 });

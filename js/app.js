@@ -1,5 +1,5 @@
 import { APP_VERSION, ENTRY_TYPES, RELATION_TYPES, KNOWLEDGE_STATES, MAP_VARIANTS, createEmptyEntity, validateEntity, validStatusesFor } from './domain/schema.js';
-import { searchEntities, uniqueTags } from './domain/search.js';
+import { searchEntities, sortEntities, uniqueTags } from './domain/search.js';
 import { relationsFor, otherEntityId, relationDirection, validateRelation } from './domain/relations.js';
 import { compareTimelineEvents, eventRangeLabel } from './domain/timeline.js';
 import { compareStoryRefs, storyPath } from './domain/story.js';
@@ -15,7 +15,7 @@ import { continuityWarnings } from './domain/intelligence.js';
 const state = {
   entities: [], relations: [], media: [], settings: {}, clues: [], reveals: [], knowledge: [], mapVersions: [], mapMarkers: [], workspace: [],
   editorEntity: null, editorBaseUpdatedAt: null, conversionSourceId: null, selectedId: null, selectedMapVersionId: null, markerPlacementLocationId: null, mapZoom: 100,
-  mediaObjectUrls: new Map(), drafts: [], storageStatus: null, legacyAvailable: false, collectionFilters: {}, pendingPortraitEntityId: null, mediaGridSize: 180, mediaViewerIds: [], mediaViewerIndex: 0
+  mediaObjectUrls: new Map(), drafts: [], storageStatus: null, legacyAvailable: false, collectionFilters: {}, pendingPortraitEntityId: null, mediaCardSizes: new Map(), mediaViewerIds: [], mediaViewerIndex: 0, mediaViewerZoom: 1
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -104,11 +104,57 @@ function renderDashboard(){
     <div class="dashboard-widget-grid section">${cards.join('')}</div>`;
 }
 
+function collectionPreferenceDefaults(routeName){
+  return routeName==='characters'
+    ? {sort:'name-asc',group:'alpha',view:'cards'}
+    : {sort:'updated-desc',group:'none',view:'list'};
+}
+function loadCollectionPreferences(routeName){
+  const defaults=collectionPreferenceDefaults(routeName);
+  try{
+    const all=JSON.parse(localStorage.getItem('unwritten.collectionPreferences')||'{}');
+    return {...defaults,...(all[routeName]||{})};
+  }catch{return defaults;}
+}
+function saveCollectionPreferences(routeName,prefs){
+  try{
+    const all=JSON.parse(localStorage.getItem('unwritten.collectionPreferences')||'{}');
+    all[routeName]=prefs;
+    localStorage.setItem('unwritten.collectionPreferences',JSON.stringify(all));
+  }catch{}
+}
+function collectionGroupKey(entity,mode){
+  if(mode==='alpha') return /^[A-Z]$/i.test((entity.name||'').trim()[0]||'') ? (entity.name||'').trim()[0].toUpperCase() : '#';
+  if(mode==='type') return typeLabel(entity.type);
+  if(mode==='status') return entity.status||'No status';
+  return '';
+}
+function collectionCard(entity,currentRoute='entries'){
+  const portraitId=entity.fields?.portraitMediaId;
+  const portrait=portraitId?state.media.find(m=>m.id===portraitId):null;
+  const tags=(entity.tags||[]).slice(0,5);
+  return `<button type="button" class="collection-entity-card ${state.selectedId===entity.id&&route().name===currentRoute?'is-selected':''}" data-open-entry="${esc(entity.id)}" data-open-route="${esc(currentRoute)}">
+    ${portrait?`<span class="collection-card-portrait"><img src="${esc(mediaUrl(portrait))}" alt="" /></span>`:'<span class="collection-card-portrait collection-card-placeholder" aria-hidden="true">✦</span>'}
+    <span class="collection-card-body"><span class="collection-card-top"><span class="list-title">${esc(entity.name||'Untitled')}</span>${entity.favorite?'<span class="collection-favorite" title="Favorite">★</span>':''}</span><span class="list-meta">${esc(typeLabel(entity.type))} • ${esc(entity.status||'Unknown')}</span>${entity.summary?`<span class="collection-card-summary">${esc(entity.summary)}</span>`:''}${tags.length?`<span class="collection-card-tags">${tags.map(t=>`<span class="badge">#${esc(t)}</span>`).join('')}${(entity.tags||[]).length>tags.length?`<span class="muted small">+${(entity.tags||[]).length-tags.length}</span>`:''}</span>`:''}</span>
+  </button>`;
+}
+function renderCollectionResults(results,routeName,{group='none',view='list'}={}){
+  const renderItems=items=>view==='cards'?`<div class="collection-card-grid">${items.map(e=>collectionCard(e,routeName)).join('')}</div>`:`<div class="list">${items.map(e=>entryListItem(e,routeName)).join('')}</div>`;
+  if(group==='none') return renderItems(results);
+  const groups=new Map();
+  for(const entity of results){const key=collectionGroupKey(entity,group);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(entity);}
+  const ordered=[...groups.entries()].sort(([a],[b])=>String(a).localeCompare(String(b),undefined,{sensitivity:'base',numeric:true}));
+  return ordered.map(([key,items])=>`<section class="collection-group"><div class="collection-group-heading"><h3>${esc(key)}</h3><span class="muted small">${items.length}</span></div>${renderItems(items)}</section>`).join('');
+}
+
 function renderCollection(routeName,selectedId){
   const cfg=COLLECTIONS[routeName]||COLLECTIONS.entries;
   const base=activeEntities(); const pool=cfg.types?base.filter(e=>cfg.types.includes(e.type)):base;
   const tags=uniqueTags(pool); const selected=selectedId?pool.find(e=>e.id===selectedId)||null:null; state.selectedId=selected?.id||null;
-  const savedFilters=state.collectionFilters[routeName]||{q:'',type:'',status:'',tag:''};
+  const defaults={q:'',type:'',status:'',tags:[],tagMode:'all'};
+  const savedFilters={...defaults,...(state.collectionFilters[routeName]||{})};
+  if(!Array.isArray(savedFilters.tags)) savedFilters.tags=savedFilters.tag?[savedFilters.tag]:[];
+  const prefs=loadCollectionPreferences(routeName);
   const typeOptions=cfg.types&&cfg.types.length===1?'':`<select id="collection-type"><option value="">All types</option>${(cfg.types||Object.keys(ENTRY_TYPES)).map(t=>`<option value="${esc(t)}" ${savedFilters.type===t?'selected':''}>${esc(typeLabel(t))}</option>`).join('')}</select>`;
   const statusSet=[...new Set(pool.map(e=>e.status))].sort();
   const extraStory=routeName==='story'?renderTrilogyOverview():'';
@@ -116,16 +162,49 @@ function renderCollection(routeName,selectedId){
   main.innerHTML=pageHeader(cfg.title,cfg.description,`<button class="button primary" data-new-entry="${esc(cfg.defaultType)}">+ New ${esc(typeLabel(cfg.defaultType))}</button>`)+extraStory+`
     <div class="collection-stack ${extraStory?'section':''}">
       <section class="card collection-filter-card" aria-label="${esc(cfg.title)} filters">
-        <div class="filter-row"><input id="collection-search" type="search" placeholder="Search this section…" value="${esc(savedFilters.q)}" />${typeOptions}<select id="collection-status"><option value="">All statuses</option>${statusSet.map(s=>`<option ${savedFilters.status===s?'selected':''}>${esc(s)}</option>`).join('')}</select><select id="collection-tag"><option value="">All tags</option>${tags.map(t=>`<option ${savedFilters.tag===t?'selected':''}>${esc(t)}</option>`).join('')}</select></div>
+        <div class="filter-row"><input id="collection-search" type="search" placeholder="Search names, notes, fields, tags…" value="${esc(savedFilters.q)}" />${typeOptions}<select id="collection-status"><option value="">All statuses</option>${statusSet.map(s=>`<option ${savedFilters.status===s?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
+        <div class="collection-tag-filter">
+          <div class="collection-tag-filter-head"><div><strong>Tags</strong><div class="muted small">Select several tags, then choose whether entries must match all or any of them.</div></div><select id="collection-tag-mode" aria-label="Tag matching"><option value="all" ${savedFilters.tagMode!=='any'?'selected':''}>Match all selected</option><option value="any" ${savedFilters.tagMode==='any'?'selected':''}>Match any selected</option></select></div>
+          <input id="collection-tag-search" type="search" placeholder="Find a tag…" autocomplete="off" />
+          <div id="collection-selected-tags" class="selected-tag-row"></div>
+          <div id="collection-tag-options" class="tag-picker-options"></div>
+        </div>
+        <div class="collection-organize-row">
+          <label>Sort<select id="collection-sort"><option value="name-asc" ${prefs.sort==='name-asc'?'selected':''}>Name A–Z</option><option value="name-desc" ${prefs.sort==='name-desc'?'selected':''}>Name Z–A</option><option value="updated-desc" ${prefs.sort==='updated-desc'?'selected':''}>Recently edited</option><option value="updated-asc" ${prefs.sort==='updated-asc'?'selected':''}>Least recently edited</option><option value="created-desc" ${prefs.sort==='created-desc'?'selected':''}>Newest created</option><option value="favorites" ${prefs.sort==='favorites'?'selected':''}>Favorites first</option></select></label>
+          <label>Group<select id="collection-group"><option value="none" ${prefs.group==='none'?'selected':''}>No grouping</option><option value="alpha" ${prefs.group==='alpha'?'selected':''}>A–Z</option><option value="type" ${prefs.group==='type'?'selected':''}>Type</option><option value="status" ${prefs.group==='status'?'selected':''}>Status</option></select></label>
+          <label>View<select id="collection-view"><option value="list" ${prefs.view==='list'?'selected':''}>Compact list</option><option value="cards" ${prefs.view==='cards'?'selected':''}>Cards</option></select></label>
+        </div>
         <div class="collection-filter-meta"><span class="muted small" id="collection-count"></span><button class="button ghost" type="button" id="clear-collection-filters">Clear filters</button></div>
       </section>
       ${detail}
-      <section class="card collection-results"><div class="section-title"><div><h2>${esc(cfg.title)} entries</h2><div class="muted small">Filters stay at the top; matching entries remain below.</div></div></div><div id="collection-list" class="list"></div></section>
+      <section class="card collection-results"><div class="section-title"><div><h2>${esc(cfg.title)} entries</h2><div class="muted small">Search, combine tags, then organize the results however you prefer.</div></div></div><div id="collection-list"></div></section>
     </div>`;
-  const update=()=>{ const q=$('#collection-search')?.value||'',type=$('#collection-type')?.value||'',status=$('#collection-status')?.value||'',tag=$('#collection-tag')?.value||''; state.collectionFilters[routeName]={q,type,status,tag}; const results=searchEntities(pool,q,{type:type||null,status:status||null,tag:tag||null}); $('#collection-list').innerHTML=results.length?results.map(e=>entryListItem(e,routeName)).join(''):emptyState(pool.length?'No matches':'No entries yet',pool.length?'Try a different search or filter.':'Create the first entry in this section to begin.'); const count=$('#collection-count'); if(count) count.textContent=`Showing ${results.length} of ${pool.length} ${pool.length===1?'entry':'entries'}.`; };
-  ['#collection-search','#collection-type','#collection-status','#collection-tag'].forEach(sel=>$(sel)?.addEventListener('input',update));
-  $('#clear-collection-filters')?.addEventListener('click',()=>{ ['#collection-search','#collection-type','#collection-status','#collection-tag'].forEach(sel=>{const el=$(sel);if(el)el.value='';}); update(); $('#collection-search')?.focus(); });
-  update();
+
+  let selectedTags=[...savedFilters.tags];
+  const renderTagPicker=()=>{
+    const q=($('#collection-tag-search')?.value||'').trim().toLowerCase();
+    const visible=tags.filter(t=>!q||t.toLowerCase().includes(q));
+    const chosen=$('#collection-selected-tags');
+    if(chosen) chosen.innerHTML=selectedTags.length?selectedTags.map(t=>`<button type="button" class="selected-tag-chip" data-remove-collection-tag="${esc(t)}">#${esc(t)} <span aria-hidden="true">×</span></button>`).join(''):'<span class="muted small">No tag filters selected.</span>';
+    const options=$('#collection-tag-options');
+    if(options) options.innerHTML=visible.length?visible.map(t=>`<label class="tag-picker-option"><input type="checkbox" value="${esc(t)}" ${selectedTags.includes(t)?'checked':''}/><span>#${esc(t)}</span></label>`).join(''):'<span class="muted small">No tags match that search.</span>';
+  };
+  const update=()=>{
+    const q=$('#collection-search')?.value||'',type=$('#collection-type')?.value||'',status=$('#collection-status')?.value||'',tagMode=$('#collection-tag-mode')?.value||'all';
+    const currentPrefs={sort:$('#collection-sort')?.value||prefs.sort,group:$('#collection-group')?.value||prefs.group,view:$('#collection-view')?.value||prefs.view};
+    state.collectionFilters[routeName]={q,type,status,tags:[...selectedTags],tagMode};
+    saveCollectionPreferences(routeName,currentPrefs);
+    const matches=searchEntities(pool,q,{type:type||null,status:status||null,tags:selectedTags,tagMode});
+    const results=sortEntities(matches,currentPrefs.sort);
+    $('#collection-list').innerHTML=results.length?renderCollectionResults(results,routeName,currentPrefs):emptyState(pool.length?'No matches':'No entries yet',pool.length?'Try a different search, tag combination, or organization option.':'Create the first entry in this section to begin.');
+    const count=$('#collection-count'); if(count) count.textContent=`Showing ${results.length} of ${pool.length} ${pool.length===1?'entry':'entries'}${selectedTags.length?` • ${selectedTags.length} tag filter${selectedTags.length===1?'':'s'}`:''}.`;
+  };
+  ['#collection-search','#collection-type','#collection-status','#collection-tag-mode','#collection-sort','#collection-group','#collection-view'].forEach(sel=>$(sel)?.addEventListener('input',update));
+  $('#collection-tag-search')?.addEventListener('input',renderTagPicker);
+  $('#collection-tag-options')?.addEventListener('change',event=>{const input=event.target.closest('input[type="checkbox"]');if(!input)return;selectedTags=input.checked?[...new Set([...selectedTags,input.value])]:selectedTags.filter(t=>t!==input.value);renderTagPicker();update();});
+  $('#collection-selected-tags')?.addEventListener('click',event=>{const button=event.target.closest('[data-remove-collection-tag]');if(!button)return;selectedTags=selectedTags.filter(t=>t!==button.dataset.removeCollectionTag);renderTagPicker();update();});
+  $('#clear-collection-filters')?.addEventListener('click',()=>{ ['#collection-search','#collection-type','#collection-status','#collection-tag-search'].forEach(sel=>{const el=$(sel);if(el)el.value='';}); selectedTags=[]; const mode=$('#collection-tag-mode');if(mode)mode.value='all';renderTagPicker();update();$('#collection-search')?.focus(); });
+  renderTagPicker(); update();
   if(selected) v3().loadEntryRevisions(selected.id);
 }
 
@@ -165,7 +244,7 @@ function renderEntryDetail(entity,routeName='entries'){
     ${entity.notes?`<section class="detail-section"><h3>Author Notes</h3><div class="prose">${text(entity.notes)}</div></section>`:''}
     ${v3().renderEntryEnhancements(entity)}
     <section class="detail-section"><div class="section-title"><h3>Related entries</h3><button class="button ghost" data-add-relation="${esc(entity.id)}">+ Link entry</button></div><div class="list">${relatedHtml||'<div class="muted small">No structured links yet.</div>'}</div></section>
-    <section class="detail-section"><div class="section-title"><h3>Images & media</h3><div class="actions">${mediaGridControls()}<button class="button ghost" data-add-media="${esc(entity.id)}">+ Attach media</button></div></div>${renderMiniMedia(linkedMedia,entity)}</section>
+    <section class="detail-section"><div class="section-title"><h3>Images & media</h3><div class="actions"><button class="button ghost" data-add-media="${esc(entity.id)}">+ Attach media</button></div></div>${renderMiniMedia(linkedMedia,entity)}</section>
     <section class="detail-section"><div class="muted small">Created ${esc(fmtDate(entity.createdAt))} • Last edited ${esc(fmtDate(entity.updatedAt))}</div></section>`;
 }
 
@@ -199,8 +278,10 @@ function createMapForLocation(locationId){
 }
 
 function portraitCapable(entity){ return Boolean(entity&&['character','deity'].includes(entity.type)); }
-function mediaGridControls(){ return `<div class="media-size-controls" aria-label="Image size controls"><button type="button" class="icon-btn" data-media-size="out" aria-label="Make media thumbnails smaller" title="Smaller images">−</button><span class="muted small">Image size</span><button type="button" class="icon-btn" data-media-size="in" aria-label="Make media thumbnails larger" title="Larger images">+</button></div>`; }
-function mediaGridStyle(){ const size=Math.max(140,Math.min(360,Number(state.mediaGridSize)||180)); return `style="--media-card-min:${size}px;--media-thumb-height:${Math.round(size*.88)}px"`; }
+function mediaCardSize(mediaId){ return Math.max(140,Math.min(420,Number(state.mediaCardSizes.get(mediaId))||180)); }
+function mediaCardStyle(mediaId){ const size=mediaCardSize(mediaId); return `style="--media-card-width:${size}px;--media-thumb-height:${Math.round(size*.88)}px"`; }
+function mediaCardControls(item){ return `<div class="media-card-toolbar"><span class="muted small">Image size</span><div class="media-size-controls" aria-label="Image size controls for ${esc(item.title||item.name||'image')}"><button type="button" class="icon-btn" data-media-card-size="out" data-media-id="${esc(item.id)}" aria-label="Make this image smaller" title="Smaller image">−</button><button type="button" class="icon-btn" data-media-card-size="in" data-media-id="${esc(item.id)}" aria-label="Make this image larger" title="Larger image">+</button></div></div>`; }
+function adjustMediaCardSize(mediaId,direction,target){ const next=Math.max(140,Math.min(420,mediaCardSize(mediaId)+(direction==='in'?60:-60))); state.mediaCardSizes.set(mediaId,next); const card=target?.closest?.('.media-card'); if(card){ card.style.setProperty('--media-card-width',`${next}px`); card.style.setProperty('--media-thumb-height',`${Math.round(next*.88)}px`); } }
 function mediaPreviewButton(item,contextEntityId=''){ const src=mediaUrl(item); return src?`<button type="button" class="media-preview-button" data-view-media="${esc(item.id)}" data-view-context="${esc(contextEntityId)}" aria-label="Open ${esc(item.title||item.name||'image')} larger"><img src="${src}" alt="${esc(item.title||item.name||'Attached image')}" /></button>`:''; }
 
 function renderCharacterPortrait(character,linkedMedia){
@@ -211,17 +292,24 @@ function renderCharacterPortrait(character,linkedMedia){
   return `<section class="detail-section character-portrait-section"><div class="character-portrait-card">${mediaPreviewButton(portrait,character.id).replace('class="media-preview-button"','class="media-preview-button character-portrait-preview"')}<div class="character-portrait-copy"><div class="eyebrow">PRIMARY PORTRAIT</div><h3>${esc(portrait.title||portrait.name||character.name)}</h3><div class="muted small">Primary image for ${esc(character.name)}. Click the image to view it full size.</div><div class="actions portrait-actions"><button class="button" data-add-portrait="${esc(character.id)}">Replace portrait</button><button class="button ghost" data-clear-portrait="${esc(character.id)}">Remove as portrait</button></div></div></div></section>`;
 }
 
-function renderMiniMedia(media,entity=null){ if(!media.length) return '<div class="muted small">No media attached.</div>'; const portraitId=portraitCapable(entity)?entity.fields?.portraitMediaId||'':''; return `<div class="media-grid" ${mediaGridStyle()}>${media.map(item=>{const isPortrait=item.id===portraitId;return `<div class="media-card ${isPortrait?'is-portrait':''}">${mediaPreviewButton(item,entity?.id||'')}<div class="media-card-body"><strong>${esc(item.title||item.name)}</strong><div class="muted small">${(item.tags||[]).map(t=>`#${esc(t)}`).join(' ')}</div>${portraitCapable(entity)?`<div class="media-card-actions">${isPortrait?'<span class="badge canon">Portrait</span>':`<button class="button ghost compact-button" data-set-portrait="${esc(entity.id)}" data-portrait-media="${esc(item.id)}">Use as portrait</button>`}</div>`:''}</div></div>`;}).join('')}</div>`; }
+function renderMiniMedia(media,entity=null){ if(!media.length) return '<div class="muted small">No media attached.</div>'; const portraitId=portraitCapable(entity)?entity.fields?.portraitMediaId||'':''; return `<div class="media-grid">${media.map(item=>{const isPortrait=item.id===portraitId;return `<div class="media-card ${isPortrait?'is-portrait':''}" ${mediaCardStyle(item.id)}>${mediaCardControls(item)}${mediaPreviewButton(item,entity?.id||'')}<div class="media-card-body"><strong>${esc(item.title||item.name)}</strong><div class="muted small">${(item.tags||[]).map(t=>`#${esc(t)}`).join(' ')}</div>${portraitCapable(entity)?`<div class="media-card-actions">${isPortrait?'<span class="badge canon">Portrait</span>':`<button class="button ghost compact-button" data-set-portrait="${esc(entity.id)}" data-portrait-media="${esc(item.id)}">Use as portrait</button>`}</div>`:''}</div></div>`;}).join('')}</div>`; }
 
 function openMediaViewer(mediaId,contextEntityId=''){
   const pool=contextEntityId?state.media.filter(item=>(item.entityIds||[]).includes(contextEntityId)):state.media;
-  state.mediaViewerIds=pool.map(item=>item.id); const idx=state.mediaViewerIds.indexOf(mediaId); state.mediaViewerIndex=idx>=0?idx:0; renderMediaViewer(); mediaViewerDialog.showModal();
+  state.mediaViewerIds=pool.map(item=>item.id); const idx=state.mediaViewerIds.indexOf(mediaId); state.mediaViewerIndex=idx>=0?idx:0; state.mediaViewerZoom=1; renderMediaViewer(); mediaViewerDialog.showModal();
+}
+function setMediaViewerZoom(value){
+  state.mediaViewerZoom=Math.max(1,Math.min(4,Math.round(Number(value)*4)/4));
+  const plane=$('#media-viewer-zoom-plane'),label=$('#media-viewer-zoom-label'),canvas=$('#media-viewer-canvas');
+  if(plane) plane.style.setProperty('--media-viewer-zoom',String(state.mediaViewerZoom));
+  if(label) label.textContent=`${Math.round(state.mediaViewerZoom*100)}%`;
+  if(state.mediaViewerZoom===1&&canvas) canvas.scrollTo({top:0,left:0});
 }
 function renderMediaViewer(){
   const ids=state.mediaViewerIds||[],id=ids[state.mediaViewerIndex],item=state.media.find(m=>m.id===id); if(!item) return;
-  $('#media-viewer-title').textContent=item.title||item.name||'Image'; $('#media-viewer-count').textContent=ids.length>1?`${state.mediaViewerIndex+1} of ${ids.length}`:''; const img=$('#media-viewer-image'); img.src=mediaUrl(item); img.alt=item.title||item.name||'Attached image'; $('#media-viewer-prev').disabled=ids.length<2; $('#media-viewer-next').disabled=ids.length<2;
+  $('#media-viewer-title').textContent=item.title||item.name||'Image'; $('#media-viewer-count').textContent=ids.length>1?`${state.mediaViewerIndex+1} of ${ids.length}`:''; const img=$('#media-viewer-image'); img.src=mediaUrl(item); img.alt=item.title||item.name||'Attached image'; $('#media-viewer-prev').disabled=ids.length<2; $('#media-viewer-next').disabled=ids.length<2; setMediaViewerZoom(state.mediaViewerZoom);
 }
-function stepMediaViewer(delta){ const ids=state.mediaViewerIds||[]; if(ids.length<2) return; state.mediaViewerIndex=(state.mediaViewerIndex+delta+ids.length)%ids.length; renderMediaViewer(); }
+function stepMediaViewer(delta){ const ids=state.mediaViewerIds||[]; if(ids.length<2) return; state.mediaViewerIndex=(state.mediaViewerIndex+delta+ids.length)%ids.length; state.mediaViewerZoom=1; renderMediaViewer(); }
 
 function renderTimeline(){
   const events=activeEntities().filter(e=>e.type==='event'),eras=activeEntities().filter(e=>e.type==='era').sort((a,b)=>a.name.localeCompare(b.name));
@@ -304,8 +392,8 @@ function renderMaps(selectedMapId){
 }
 
 function renderMedia(){
-  main.innerHTML=pageHeader('Media','A reusable private media library for maps, sketches, symbols, creatures, architecture, family trees, and other reference images.','<button class="button primary" data-upload-media="">+ Add media</button>')+`<section class="card"><div class="section-title"><div class="filter-row"><input id="media-search" type="search" placeholder="Search media titles, filenames, or tags…" /></div>${mediaGridControls()}</div><div id="media-results"></div></section>`;
-  const update=()=>{ const q=($('#media-search')?.value||'').trim().toLowerCase(); const items=state.media.filter(item=>!q||[item.title,item.name,...(item.tags||[])].join(' ').toLowerCase().includes(q)); $('#media-results').innerHTML=items.length?`<div class="media-grid" ${mediaGridStyle()}>${items.map(item=>{const mapUse=state.mapVersions.filter(v=>v.mediaId===item.id);return `<article class="media-card">${mediaPreviewButton(item,'')}<div class="media-card-body"><strong>${esc(item.title||item.name)}</strong><div class="muted small">${(item.tags||[]).map(t=>`#${esc(t)}`).join(' ')||'No tags'}</div><div class="muted small">Linked to ${(item.entityIds||[]).length} entr${(item.entityIds||[]).length===1?'y':'ies'}${mapUse.length?` • used by ${mapUse.length} map version${mapUse.length===1?'':'s'}`:''}</div>${mapUse.length?'<div class="muted small" style="margin-top:8px">Delete the map version first to remove this image safely.</div>':`<button class="button danger ghost" data-delete-media="${esc(item.id)}" style="margin-top:8px">Remove</button>`}</div></article>`;}).join('')}</div>`:emptyState('No media matches',state.media.length?'Try a different search.':'Images are stored in the private R2 media library and can be linked to multiple entries without duplicate uploads.'); };
+  main.innerHTML=pageHeader('Media','A reusable private media library for maps, sketches, symbols, creatures, architecture, family trees, and other reference images.','<button class="button primary" data-upload-media="">+ Add media</button>')+`<section class="card"><div class="section-title"><div class="filter-row"><input id="media-search" type="search" placeholder="Search media titles, filenames, or tags…" /></div></div><div id="media-results"></div></section>`;
+  const update=()=>{ const q=($('#media-search')?.value||'').trim().toLowerCase(); const items=state.media.filter(item=>!q||[item.title,item.name,...(item.tags||[])].join(' ').toLowerCase().includes(q)); $('#media-results').innerHTML=items.length?`<div class="media-grid">${items.map(item=>{const mapUse=state.mapVersions.filter(v=>v.mediaId===item.id);return `<article class="media-card" ${mediaCardStyle(item.id)}>${mediaCardControls(item)}${mediaPreviewButton(item,'')}<div class="media-card-body"><strong>${esc(item.title||item.name)}</strong><div class="muted small">${(item.tags||[]).map(t=>`#${esc(t)}`).join(' ')||'No tags'}</div><div class="muted small">Linked to ${(item.entityIds||[]).length} entr${(item.entityIds||[]).length===1?'y':'ies'}${mapUse.length?` • used by ${mapUse.length} map version${mapUse.length===1?'':'s'}`:''}</div>${mapUse.length?'<div class="muted small" style="margin-top:8px">Delete the map version first to remove this image safely.</div>':`<button class="button danger ghost" data-delete-media="${esc(item.id)}" style="margin-top:8px">Remove</button>`}</div></article>`;}).join('')}</div>`:emptyState('No media matches',state.media.length?'Try a different search.':'Images are stored in the private R2 media library and can be linked to multiple entries without duplicate uploads.'); };
   $('#media-search').addEventListener('input',update); update();
 }
 
@@ -378,7 +466,7 @@ function applyRoleUi(){
   document.body.dataset.role=reviewer?'reviewer':'owner';
   if(reviewer){
     $('#quick-add')?.classList.add('hidden');
-    main.querySelectorAll('[data-new-entry],[data-edit-entry],[data-command],[data-workspace-result],[data-add-plot-beat],[data-delete-workspace],[data-toggle-workspace],[data-open-saved-view],[data-add-whiteboard-node],[data-convert-note],[data-generate-name],[data-toggle-focus],[data-export-manuscript],[data-suggest-link-from],[data-restore-revision],[data-toggle-favorite],[data-add-relation],[data-delete-relation],[data-add-media],[data-add-portrait],[data-set-portrait],[data-clear-portrait],[data-upload-media],[data-view-media],[data-media-size],[data-delete-media],[data-convert-idea],[data-unarchive-entry],[data-add-clue],[data-delete-clue],[data-add-reveal],[data-delete-reveal],[data-add-knowledge],[data-add-knowledge-for],[data-delete-knowledge],[data-add-map-version],[data-delete-map-version],[data-delete-marker],[data-new-map-for],form button[type="submit"],#import-backup,#import-legacy-db').forEach(el=>el.classList.add('hidden'));
+    main.querySelectorAll('[data-new-entry],[data-edit-entry],[data-command],[data-workspace-result],[data-add-plot-beat],[data-delete-workspace],[data-toggle-workspace],[data-open-saved-view],[data-add-whiteboard-node],[data-convert-note],[data-generate-name],[data-toggle-focus],[data-export-manuscript],[data-suggest-link-from],[data-restore-revision],[data-toggle-favorite],[data-add-relation],[data-delete-relation],[data-add-media],[data-add-portrait],[data-set-portrait],[data-clear-portrait],[data-upload-media],[data-view-media],[data-media-card-size],[data-delete-media],[data-convert-idea],[data-unarchive-entry],[data-add-clue],[data-delete-clue],[data-add-reveal],[data-delete-reveal],[data-add-knowledge],[data-add-knowledge-for],[data-delete-knowledge],[data-add-map-version],[data-delete-map-version],[data-delete-marker],[data-new-map-for],form button[type="submit"],#import-backup,#import-legacy-db').forEach(el=>el.classList.add('hidden'));
   }
 }
 
@@ -511,7 +599,7 @@ function bindStaticEvents(){
   $('#quick-add').addEventListener('click',()=>openEntryEditor('lore')); $('#random-entry').addEventListener('click',()=>{ const pool=activeEntities(); if(!pool.length) return toast('Create an entry first.'); const pick=pool[Math.floor(Math.random()*pool.length)]; setRoute(sectionForType(pick.type),pick.id); });
   $('#entry-form').addEventListener('submit',saveEntity); $('#close-entry-dialog').addEventListener('click',()=>entryDialog.close()); $('#cancel-entry').addEventListener('click',()=>entryDialog.close()); $('#archive-entry').addEventListener('click',archiveCurrentEntity); $('#delete-entry').addEventListener('click',deleteEntityConfirmed);
   $('#relation-form').addEventListener('submit',saveRelation); $('#close-relation-dialog').addEventListener('click',()=>relationDialog.close()); $('#cancel-relation').addEventListener('click',()=>relationDialog.close());
-  $('#media-form').addEventListener('submit',saveMedia); $('#close-media-dialog').addEventListener('click',()=>{state.pendingPortraitEntityId=null;mediaDialog.close();}); $('#cancel-media').addEventListener('click',()=>{state.pendingPortraitEntityId=null;mediaDialog.close();}); $('#close-media-viewer').addEventListener('click',()=>mediaViewerDialog.close()); $('#media-viewer-prev').addEventListener('click',()=>stepMediaViewer(-1)); $('#media-viewer-next').addEventListener('click',()=>stepMediaViewer(1));
+  $('#media-form').addEventListener('submit',saveMedia); $('#close-media-dialog').addEventListener('click',()=>{state.pendingPortraitEntityId=null;mediaDialog.close();}); $('#cancel-media').addEventListener('click',()=>{state.pendingPortraitEntityId=null;mediaDialog.close();}); $('#close-media-viewer').addEventListener('click',()=>mediaViewerDialog.close()); $('#media-viewer-prev').addEventListener('click',()=>stepMediaViewer(-1)); $('#media-viewer-next').addEventListener('click',()=>stepMediaViewer(1)); $('#media-viewer-zoom-in').addEventListener('click',()=>setMediaViewerZoom(state.mediaViewerZoom+.25)); $('#media-viewer-zoom-out').addEventListener('click',()=>setMediaViewerZoom(state.mediaViewerZoom-.25)); $('#media-viewer-zoom-reset').addEventListener('click',()=>setMediaViewerZoom(1));
   $('#clue-form').addEventListener('submit',saveClue); $('#close-clue-dialog').addEventListener('click',()=>clueDialog.close()); $('#cancel-clue').addEventListener('click',()=>clueDialog.close());
   $('#reveal-form').addEventListener('submit',saveReveal); $('#close-reveal-dialog').addEventListener('click',()=>revealDialog.close()); $('#cancel-reveal').addEventListener('click',()=>revealDialog.close());
   $('#knowledge-form').addEventListener('submit',saveKnowledge); $('#close-knowledge-dialog').addEventListener('click',()=>knowledgeDialog.close()); $('#cancel-knowledge').addEventListener('click',()=>knowledgeDialog.close()); $('#knowledge-kind').addEventListener('input',e=>$('#knowledge-knower-wrap').classList.toggle('hidden',e.target.value==='reader'));
@@ -522,7 +610,7 @@ function bindStaticEvents(){
   document.addEventListener('keydown',event=>{ if(mediaViewerDialog?.open&&event.key==='ArrowLeft'){ event.preventDefault(); stepMediaViewer(-1); return; } if(mediaViewerDialog?.open&&event.key==='ArrowRight'){ event.preventDefault(); stepMediaViewer(1); return; } if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='k'){ event.preventDefault(); openSearchDialog(); } if((event.key==='Enter'||event.key===' ')&&event.target.matches?.('.graph-click')){ event.preventDefault(); const e=entityById(event.target.dataset.openEntry); if(e) setRoute(event.target.dataset.openRoute||sectionForType(e.type),e.id); } });
 
   document.addEventListener('click',async event=>{
-    const target=event.target.closest('[data-new-entry],[data-edit-entry],[data-close-detail],[data-command],[data-workspace-result],[data-add-plot-beat],[data-delete-workspace],[data-toggle-workspace],[data-open-saved-view],[data-add-whiteboard-node],[data-convert-note],[data-generate-name],[data-toggle-focus],[data-export-manuscript],[data-suggest-link-from],[data-restore-revision],[data-open-entry],[data-toggle-favorite],[data-add-relation],[data-delete-relation],[data-add-media],[data-add-portrait],[data-set-portrait],[data-clear-portrait],[data-upload-media],[data-view-media],[data-media-size],[data-delete-media],[data-global-result],[data-convert-idea],[data-unarchive-entry],[data-add-clue],[data-delete-clue],[data-add-reveal],[data-delete-reveal],[data-add-knowledge],[data-add-knowledge-for],[data-delete-knowledge],[data-add-map-version],[data-map-version],[data-delete-map-version],[data-delete-marker],[data-open-map],[data-zoom-map],[data-new-map-for],[data-recover-draft],[data-discard-draft]');
+    const target=event.target.closest('[data-new-entry],[data-edit-entry],[data-close-detail],[data-command],[data-workspace-result],[data-add-plot-beat],[data-delete-workspace],[data-toggle-workspace],[data-open-saved-view],[data-add-whiteboard-node],[data-convert-note],[data-generate-name],[data-toggle-focus],[data-export-manuscript],[data-suggest-link-from],[data-restore-revision],[data-open-entry],[data-toggle-favorite],[data-add-relation],[data-delete-relation],[data-add-media],[data-add-portrait],[data-set-portrait],[data-clear-portrait],[data-upload-media],[data-view-media],[data-media-card-size],[data-delete-media],[data-global-result],[data-convert-idea],[data-unarchive-entry],[data-add-clue],[data-delete-clue],[data-add-reveal],[data-delete-reveal],[data-add-knowledge],[data-add-knowledge-for],[data-delete-knowledge],[data-add-map-version],[data-map-version],[data-delete-map-version],[data-delete-marker],[data-open-map],[data-zoom-map],[data-new-map-for],[data-recover-draft],[data-discard-draft]');
     if(target){
       if(await v3().handleClick(target)) return;
       if(target.dataset.command){ const [kind,value]=target.dataset.command.split(':'); clearSearchUi(); closeSearchDialog(); if(kind==='new')openEntryEditor(value); if(kind==='route')setRoute(value); if(kind==='action'&&value==='export-zip')await exportZipAction(); }
@@ -534,7 +622,7 @@ function bindStaticEvents(){
       if(target.dataset.toggleFavorite) await toggleFavorite(target.dataset.toggleFavorite);
       if(target.dataset.addRelation) openRelationEditor(target.dataset.addRelation);
       if(target.dataset.deleteRelation){ event.stopPropagation(); await deleteOne('relations',target.dataset.deleteRelation); await refreshState(); renderRoute(); toast('Link removed.'); }
-      if(target.dataset.addMedia) openMediaEditor(target.dataset.addMedia,''); if(target.dataset.addPortrait) openMediaEditor(target.dataset.addPortrait,'portrait',target.dataset.addPortrait); if(target.dataset.setPortrait) await setCharacterPortrait(target.dataset.setPortrait,target.dataset.portraitMedia); if(target.dataset.clearPortrait) await clearCharacterPortrait(target.dataset.clearPortrait); if(target.hasAttribute('data-upload-media')) openMediaEditor('',target.dataset.uploadMedia||''); if(target.dataset.viewMedia) openMediaViewer(target.dataset.viewMedia,target.dataset.viewContext||''); if(target.dataset.mediaSize){ state.mediaGridSize=Math.max(140,Math.min(360,state.mediaGridSize+(target.dataset.mediaSize==='in'?60:-60))); renderRoute(); }
+      if(target.dataset.addMedia) openMediaEditor(target.dataset.addMedia,''); if(target.dataset.addPortrait) openMediaEditor(target.dataset.addPortrait,'portrait',target.dataset.addPortrait); if(target.dataset.setPortrait) await setCharacterPortrait(target.dataset.setPortrait,target.dataset.portraitMedia); if(target.dataset.clearPortrait) await clearCharacterPortrait(target.dataset.clearPortrait); if(target.hasAttribute('data-upload-media')) openMediaEditor('',target.dataset.uploadMedia||''); if(target.dataset.viewMedia) openMediaViewer(target.dataset.viewMedia,target.dataset.viewContext||''); if(target.dataset.mediaCardSize) adjustMediaCardSize(target.dataset.mediaId,target.dataset.mediaCardSize,target);
       if(target.dataset.deleteMedia){ const used=state.mapVersions.filter(v=>v.mediaId===target.dataset.deleteMedia),portraitUsers=state.entities.filter(e=>portraitCapable(e)&&e.fields?.portraitMediaId===target.dataset.deleteMedia); if(used.length) toast('This image is used by a map version. Delete that map version first.'); else if(portraitUsers.length) toast(`This image is the portrait for ${portraitUsers.map(e=>e.name).join(', ')}. Remove it as the portrait first.`); else if(confirm('Remove this media item from the private media library?')){ await deleteOne('media',target.dataset.deleteMedia); await refreshState(); renderRoute(); toast('Media removed.'); } }
       if(target.dataset.globalResult){ clearSearchUi(); closeSearchDialog(); const e=entityById(target.dataset.globalResult); if(e)setRoute(sectionForType(e.type),e.id); }
       if(target.dataset.convertIdea) convertIdea(target.dataset.convertIdea);
