@@ -6,7 +6,7 @@ import { APP_VERSION } from '../js/domain/schema.js';
 const root=new URL('../',import.meta.url);
 const read=async path=>readFile(new URL(path,root),'utf8');
 
-test('V3.2.0 identifies itself as 3.2.0',()=>{ assert.equal(APP_VERSION,'3.2.0'); });
+test('V3.5.1 identifies itself as 3.5.1',()=>{ assert.equal(APP_VERSION,'3.5.1'); });
 
 test('Wrangler binds the production D1 and R2 resources and disables alternate public endpoints',async()=>{
   const cfg=JSON.parse(await read('wrangler.jsonc'));
@@ -25,7 +25,8 @@ test('canonical data adapter is remote while IndexedDB is limited to local draft
   const db=await read('js/data/db.js');
   const drafts=await read('js/data/drafts.js');
   const legacy=await read('js/data/legacy.js');
-  assert.match(db,/\/api\/snapshot/);
+  assert.match(db,/\/api\/store\//);
+  assert.doesNotMatch(db,/\/api\/snapshot/);
   assert.doesNotMatch(db,/indexedDB/);
   assert.match(drafts,/indexedDB\.open/);
   assert.match(legacy,/kayworks_world_bible/);

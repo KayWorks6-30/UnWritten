@@ -1,5 +1,5 @@
-export const APP_VERSION = '3.2.0';
-export const SCHEMA_VERSION = 6;
+export const APP_VERSION = '3.5.1';
+export const SCHEMA_VERSION = 8;
 
 export const DATE_UNCERTAINTY = ['Exact','Approximate','Range','Traditional','Disputed','Unknown'];
 export const KNOWLEDGE_STATES = ['Knows truth','Partial truth','Incorrect belief','Unaware','Forgotten','Rejected truth','Unknown'];
@@ -7,6 +7,8 @@ export const MAP_VARIANTS = ['World','Continent','Country','City','Political','P
 export const WORKSPACE_KINDS = ['plotThread','plotBeat','contextNote','task','savedView','calendar','calendarDate','mapLayer','mapRoute','whiteboardNode','whiteboardEdge','manuscriptDocument','revision','readerProfile'];
 
 export const CANON_STATUSES = ['Canon', 'Provisional', 'Concept', 'Contradicted', 'Shelved', 'Unknown'];
+export const RELATION_STATUSES = CANON_STATUSES;
+export const STORY_POINT_TYPES = ['book','part','chapter','scene'];
 export const QUESTION_STATUSES = ['Open', 'Exploring', 'Answered', 'Shelved'];
 export const IDEA_STATUSES = ['Inbox', 'Exploring', 'Converted', 'Shelved'];
 export const FORESHADOW_VISIBILITY = ['Invisible', 'Extremely subtle', 'Subtle', 'Noticeable', 'Obvious'];
@@ -98,7 +100,8 @@ export const ENTRY_TYPES = {
     fields: [
       { key: 'societyKind', label: 'Kind', type: 'select', options: ['Civilization','Culture','People','Nation','Kingdom','Empire','Tribe','Historical Society','Other'] },
       { key: 'origin', label: 'Origin', type: 'textarea' },
-      { key: 'homeland', label: 'Homeland', type: 'text' },
+      { key: 'homelandLocationId', label: 'Homeland', type: 'entity', entityTypes: ['location'] },
+      { key: 'homeland', label: 'Legacy Homeland Note', type: 'text' },
       { key: 'history', label: 'History', type: 'textarea' },
       { key: 'government', label: 'Government', type: 'textarea' },
       { key: 'socialStructure', label: 'Social Structure', type: 'textarea' },
@@ -134,8 +137,10 @@ export const ENTRY_TYPES = {
       { key: 'revivalSort', label: 'Revival / Return (sortable year, optional)', type: 'number' },
       { key: 'lifeStatus', label: 'Status', type: 'text' },
       { key: 'speciesPeople', label: 'Species / People', type: 'text' },
-      { key: 'homeland', label: 'Homeland', type: 'text' },
-      { key: 'currentLocation', label: 'Current Location', type: 'text' },
+      { key: 'homelandLocationId', label: 'Homeland', type: 'entity', entityTypes: ['location'] },
+      { key: 'homeland', label: 'Legacy Homeland Note', type: 'text' },
+      { key: 'currentLocationId', label: 'Current Location', type: 'entity', entityTypes: ['location'] },
+      { key: 'currentLocation', label: 'Legacy Current Location Note', type: 'text' },
       { key: 'appearance', label: 'Appearance', type: 'textarea' },
       { key: 'personality', label: 'Personality', type: 'textarea' },
       { key: 'philosophy', label: 'Philosophy', type: 'textarea' },
@@ -173,7 +178,8 @@ export const ENTRY_TYPES = {
       { key: 'organizationKind', label: 'Kind', type: 'select', options: ['Government','Military','Guild','Religious Organization','School','Research Organization','Criminal Group','Secret Society','Exploration Group','Political Movement','Other'] },
       { key: 'leadership', label: 'Leadership', type: 'text' },
       { key: 'membership', label: 'Membership', type: 'textarea' },
-      { key: 'headquarters', label: 'Headquarters', type: 'text' },
+      { key: 'headquartersLocationId', label: 'Headquarters', type: 'entity', entityTypes: ['location'] },
+      { key: 'headquarters', label: 'Legacy Headquarters Note', type: 'text' },
       { key: 'territory', label: 'Territory', type: 'text' },
       { key: 'goals', label: 'Goals', type: 'textarea' },
       { key: 'ideology', label: 'Ideology', type: 'textarea' },
@@ -187,9 +193,12 @@ export const ENTRY_TYPES = {
     fields: [
       { key: 'objectKind', label: 'Object Type', type: 'text' },
       { key: 'description', label: 'Description', type: 'textarea' },
-      { key: 'creator', label: 'Creator', type: 'text' },
-      { key: 'originalOwner', label: 'Original Owner', type: 'text' },
-      { key: 'currentOwner', label: 'Current Owner', type: 'text' },
+      { key: 'creatorId', label: 'Creator', type: 'entity' },
+      { key: 'creator', label: 'Legacy Creator Note', type: 'text' },
+      { key: 'originalOwnerId', label: 'Original Owner', type: 'entity' },
+      { key: 'originalOwner', label: 'Legacy Original Owner Note', type: 'text' },
+      { key: 'currentOwnerId', label: 'Current Owner', type: 'entity' },
+      { key: 'currentOwner', label: 'Legacy Current Owner Note', type: 'text' },
       { key: 'history', label: 'History', type: 'textarea' },
       { key: 'knownPurpose', label: 'Known Purpose', type: 'textarea' },
       { key: 'truePurpose', label: 'True Purpose', type: 'textarea' },
@@ -257,10 +266,20 @@ export const ENTRY_TYPES = {
       { key: 'majorReveals', label: 'Major Reveals', type: 'textarea' }
     ]
   },
+  part: {
+    label: 'Part', group: 'Story', icon: '§',
+    fields: [
+      { key: 'parentBookId', label: 'Book', type: 'entity', entityTypes: ['book'] },
+      { key: 'order', label: 'Part Number / Order', type: 'number' },
+      { key: 'purpose', label: 'Purpose / Arc', type: 'textarea' },
+      { key: 'themes', label: 'Themes', type: 'textarea' }
+    ]
+  },
   chapter: {
     label: 'Chapter', group: 'Story', icon: '¶',
     fields: [
       { key: 'parentBookId', label: 'Book', type: 'entity', entityTypes: ['book'] },
+      { key: 'parentPartId', label: 'Part (optional)', type: 'entity', entityTypes: ['part'] },
       { key: 'number', label: 'Chapter Number', type: 'number' },
       { key: 'pov', label: 'POV', type: 'text' },
       { key: 'locationText', label: 'Location', type: 'text' },
@@ -316,7 +335,7 @@ export const ENTRY_TYPES = {
     fields: [
       { key: 'payoff', label: 'Payoff', type: 'textarea' },
       { key: 'event', label: 'Foreshadowing Event', type: 'textarea' },
-      { key: 'storyEntityId', label: 'Chapter / Scene', type: 'entity', entityTypes: ['chapter','scene'] },
+      { key: 'storyEntityId', label: 'Part / Chapter / Scene', type: 'entity', entityTypes: ['part','chapter','scene'] },
       { key: 'chapter', label: 'Legacy Chapter / Scene Note', type: 'text' },
       { key: 'visibility', label: 'Visibility', type: 'select', options: FORESHADOW_VISIBILITY },
       { key: 'firstRead', label: 'Intended First-read Interpretation', type: 'textarea' },
@@ -342,6 +361,33 @@ export const ENTRY_TYPES = {
     ]
   }
 };
+
+
+// Fields in this registry are canonical structured references. Free-text compatibility
+// fields may describe the same subject, but they are not authoritative references.
+export const ENTITY_REFERENCE_FIELDS = Object.freeze({
+  location:[{key:'parentLocationId',types:['location'],role:'Parent location'}],
+  event:[{key:'eraId',types:['era'],role:'Era'},{key:'locationId',types:['location'],role:'Location'}],
+  civilization:[{key:'homelandLocationId',types:['location'],role:'Homeland'}],
+  character:[{key:'homelandLocationId',types:['location'],role:'Homeland'},{key:'currentLocationId',types:['location'],role:'Current location'}],
+  organization:[{key:'headquartersLocationId',types:['location'],role:'Headquarters'}],
+  artifact:[{key:'creatorId',types:null,role:'Creator'},{key:'originalOwnerId',types:null,role:'Original owner'},{key:'currentOwnerId',types:null,role:'Current owner'}],
+  map:[{key:'scopeLocationId',types:['location'],role:'Map scope'},{key:'parentMapId',types:['map'],role:'Parent map'},{key:'eraId',types:['era'],role:'Era'}],
+  trilogy:[{key:'protagonistIds',types:['character'],role:'Series protagonist',many:true}],
+  part:[{key:'parentBookId',types:['book'],role:'Parent book'}],
+  chapter:[{key:'parentBookId',types:['book'],role:'Parent book'},{key:'parentPartId',types:['part'],role:'Parent part'}],
+  scene:[{key:'parentChapterId',types:['chapter'],role:'Parent chapter'},{key:'locationId',types:['location'],role:'Location'}],
+  foreshadowing:[{key:'storyEntityId',types:['part','chapter','scene'],role:'Story point'}]
+});
+
+export const SEMANTIC_TEXT_REFERENCE_PAIRS = Object.freeze({
+  character:[['homeland','homelandLocationId','Homeland'],['currentLocation','currentLocationId','Current location']],
+  civilization:[['homeland','homelandLocationId','Homeland']],
+  organization:[['headquarters','headquartersLocationId','Headquarters']],
+  artifact:[['creator','creatorId','Creator'],['originalOwner','originalOwnerId','Original owner'],['currentOwner','currentOwnerId','Current owner']]
+});
+
+export function referenceFieldsForType(type){ return ENTITY_REFERENCE_FIELDS[type] || []; }
 
 export const TYPE_GROUPS = Object.entries(ENTRY_TYPES).reduce((acc, [key, value]) => {
   (acc[value.group] ||= []).push({ key, ...value });

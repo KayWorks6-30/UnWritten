@@ -1,92 +1,81 @@
-# V3.2.0 Release Verification
+# V3.5.1 Release Verification — Architecture Stabilization & Scale
 
-V3.2.0 is a collection-discovery and character-library release. It adds searchable multi-tag filtering, Match All / Match Any behavior, and persistent sort/group/view preferences while keeping the existing media, archive, and Cloudflare storage behavior intact. `keep_vars: true` remains configured in `wrangler.jsonc`.
+V3.5.1 is the post-handoff stabilization patch. It keeps portable schema **8**, preserves the V3.5 architecture, and hardens destructive cascades plus optimistic-concurrency preconditions. The schema-8 migration remains `migrations/0004_v35_architecture_stabilization.sql`.
 
-## Character portrait checks
+It is not a rewrite and does not replace canonical records.
 
-- Open an existing Character and verify the Portrait section is visible.
-- Upload a portrait and confirm it appears immediately and also remains in Images & media.
-- Attach a second image and use **Use as portrait** to switch the primary portrait without re-uploading.
-- Use **Remove as portrait** and confirm the media item remains in the gallery/library.
-- Confirm a media item cannot be deleted while it is assigned as a character portrait.
-- Export/restore a backup with a character portrait and confirm the portrait reference survives.
-- No D1 migration is required for V3.2.0.
+## Major release changes
 
+- per-store/record runtime read APIs; normal client reads no longer use `/api/snapshot`
+- independent browser store caches with request coalescing and targeted cache updates
+- `/api/entities/query` server-side search/filter/cursor foundation
+- common mutation pipeline: concurrency → normalization → validation → revision → canonical write → reference maintenance
+- generalized optimistic concurrency timestamps for Settings, Media metadata, and Map Versions in addition to stores that already had them
+- D1 structural safety triggers for normalized references and marker coordinates
+- sequential backup migrations through schema 8
+- architecture diagnostics and deep reverse-index comparison
+- owner-only reverse-index rebuild using bounded batches
+- synthetic scale/stress harness
+- cached narrative entity indexing
+- service-worker/static asset version bump to 3.5.1
 
-## Automated release gate
+V3.4 hardening remains intact: optional Part, narrative positions, relationship status, hot-field projections, canonical semantic references, reverse dependency indexing, and Part-aware knowledge/reveal/continuity features.
 
-Run:
+## Required verification
+
+1. Export and retain a complete V3.4 ZIP backup before production migration.
+2. Run `npm run verify` and require all tests/syntax/migration/build/repository checks to pass.
+3. Run `npm run stress` and retain the timing/payload output for comparison with later releases.
+4. Apply all migrations locally and confirm schema 8 succeeds from a clean DB.
+5. Confirm schema 6 → 7 → 8 migration smoke passes.
+6. Confirm normal browser data access uses `/api/store/...` rather than `/api/snapshot`.
+7. Search for an entity through global quick search and confirm `/api/entities/query` returns results.
+8. Edit an Entity and confirm the saved record receives a new server `updatedAt`.
+9. Open the same record in two browser tabs; save in one, then confirm stale save in the other receives conflict handling rather than overwriting.
+10. Repeat a stale-write check for a non-Entity mutable store (for example project Settings or a Map Version where practical).
+11. Verify relationship, clue, reveal, knowledge, map-version, and map-marker writes reject missing normalized references.
+12. Verify map-marker coordinates outside 0–100 are rejected.
+13. Open Settings → Architecture diagnostics and run the shallow health check.
+14. Run Deep verify and confirm SQLite integrity reports `ok`, narrative broken-position count is zero, and reference index reports synchronized.
+15. Rebuild the reference index as Owner and confirm the post-rebuild deep check reports synchronized.
+16. Confirm a Reviewer cannot invoke the rebuild/mutation endpoints.
+17. Confirm Entity Impact still returns indexed inbound references after create/edit/delete operations.
+18. Confirm `/api/snapshot` still functions for backup/diagnostic paths but is not used by ordinary runtime data adapter code.
+19. Export JSON and ZIP backups and restore locally. Confirm the restored project is schema 8 and retains V3.4 domain content.
+20. Restore an older supported backup and confirm sequential migration reaches schema 8.
+21. Verify Reader Preview, Story organizer, Knowledge, Mysteries, Maps, Timeline, Continuity, and Relationships still render correctly.
+22. Verify Media and Maps still load protected R2 image URLs.
+23. Verify mobile and desktop layouts remain usable.
+24. Export a fresh post-upgrade V3.5 ZIP backup after production smoke testing.
+
+## Automated verification commands
+
+```bash
+npm test
+npm run syntax
+npm run migration:smoke
+npm run stress
+npm run build
+node scripts/verify.mjs
+```
+
+Or the standard combined suite:
 
 ```bash
 npm run verify
 ```
 
-The release gate covers:
+`npm run stress` is intentionally separate from `npm run verify` so normal deploy verification remains deterministic and fast.
 
-- domain/schema/search/story/relationship regressions
-- backup migration/validation/ZIP integrity
-- schema `0` rejection and future-schema rejection
-- typed restore references
-- multi-node Location/Map cycle rejection
-- V3 workspace reference model
-- knowledge-at-story-point and reader/character asymmetry
-- mystery multi-link/progression behavior
-- deterministic continuity warnings
-- plot coverage and character interaction derivations
-- Cloudflare binding and privacy boundaries
-- Worker JWT/reviewer/concurrency/delete/revision/R2-trash hardening assertions
-- remote-media and map-zoom regressions
-- JS/MJS syntax checks
-- clean SQLite migration smoke
-- production static build
-- asset/import/config checks
-- duplicate HTML IDs
-- basic committed-secret/private-key scan
+A Chromium smoke harness is available as `npm run browser:smoke`; managed environments may block Chromium loopback access, so production/local-browser smoke remains part of release verification even when the harness cannot run in CI/sandbox infrastructure.
 
-## Browser smoke
+## Compatibility / intentional limits
 
-When the environment permits a local Chromium origin:
-
-```bash
-npm run browser:smoke
-```
-
-The smoke boots the real browser client against a local HTTP/API fixture and checks Media/Maps rendering with R2-style protected URLs.
-
-If a managed Chromium policy blocks loopback/local test origins, record that as an environment limitation and perform the equivalent local Wrangler browser smoke manually.
-
-## Pre-deploy checklist
-
-1. Export and retain a full production ZIP backup.
-2. Confirm `TEAM_DOMAIN`, `POLICY_AUD`, and `OWNER_EMAILS` are configured.
-3. Confirm `DEV_AUTH_BYPASS` is not configured in production.
-4. Apply `npm run db:migrate:remote`.
-5. Configure `_restore/` and `_trash/` R2 lifecycle rules.
-6. Run `npm run verify`.
-7. Deploy with `npm run deploy`.
-
-## Production acceptance
-
-Owner:
-
-- health endpoint reports `3.2.0`, correct email and `owner`
-- old production content still loads
-- entity save/reload works
-- stale two-browser edit returns a conflict instead of silent overwrite
-- previous entity revision appears after edit
-- remote media renders after reload
-- map zoom, layers, marker drag/search/filter/drill-down work
-- backup/export and restore staging work
-- Story Compass is optional and does not affect old Series/Trilogy data
-- Continuity, Plot Grid, World Tools, Workbench, Reader Preview routes open
-
-Reviewer:
-
-- can browse all intended read surfaces
-- cannot mutate data through UI
-- direct non-GET API mutation is rejected
-
-Recovery:
-
-- create a fresh V3 ZIP backup after the deployment is proven
-- keep the pre-upgrade backup until the release has been used successfully
+- Application version: `3.5.1`
+- Portable schema version: `8`
+- Backup format identifier unchanged
+- optional Part remains compatible with direct Book → Chapter projects
+- replacement restore remains the supported restore semantic
+- full Entity revision snapshots remain in use
+- initial UI boot still performs compatibility hydration across current canonical stores; the backend no longer requires monolithic snapshot reads, enabling later feature-scoped lazy loading without another persistence redesign
+- no graph database, formal Species model, event sourcing, autonomous cross-linking, merge restore, generalized materialized caching, or full calendar/whiteboard engine was introduced

@@ -1,4 +1,4 @@
-import { RELATION_TYPES, MAP_VARIANTS, KNOWLEDGE_STATES, SCHEMA_VERSION, WORKSPACE_KINDS, validateEntity } from '../domain/schema.js';
+import { RELATION_TYPES, RELATION_STATUSES, MAP_VARIANTS, KNOWLEDGE_STATES, SCHEMA_VERSION, WORKSPACE_KINDS, STORY_POINT_TYPES, referenceFieldsForType, validateEntity } from '../domain/schema.js';
 
 const STORE_NAMES = ['entities','relations','media','settings','clues','reveals','knowledge','mapVersions','mapMarkers','workspace'];
 
@@ -58,9 +58,9 @@ function validateWorkspaceItem(item,{entityById,entityIds,versionIds,markerIds,m
     for(const [key,ref] of [['fromNodeId',d.fromNodeId],['toNodeId',d.toNodeId]]){ const node=workspaceById.get(ref); if(!node||node.kind!=='whiteboardNode') errors.push(`Workspace ${id}: ${key} must point to a whiteboardNode.`); }
   }
   if(item?.kind==='manuscriptDocument'){
-    if(d.bookId) entity(d.bookId,['book'],'bookId'); if(d.chapterId) entity(d.chapterId,['chapter'],'chapterId'); if(d.sceneId) entity(d.sceneId,['scene'],'sceneId');
+    if(d.bookId) entity(d.bookId,['book'],'bookId'); if(d.partId) entity(d.partId,['part'],'partId'); if(d.chapterId) entity(d.chapterId,['chapter'],'chapterId'); if(d.sceneId) entity(d.sceneId,['scene'],'sceneId');
   }
-  if(item?.kind==='readerProfile'&&d.pointId) entity(d.pointId,['book','chapter','scene'],'pointId');
+  if(item?.kind==='readerProfile'&&d.pointId) entity(d.pointId,STORY_POINT_TYPES,'pointId');
 }
 
 export function validateBackupSnapshot(data) {
@@ -89,12 +89,18 @@ export function validateBackupSnapshot(data) {
   for(const entity of data.entities){
     const entityErrors=validateEntity(entity); if(entityErrors.length) errors.push(`Entity ${entity?.id||'(missing id)'}: ${entityErrors.join(' ')}`);
     if(entity&&entity.fields&&typeof entity.fields!=='object') errors.push(`Entity ${entity.id}: fields must be an object.`);
-    const f=entity?.fields||{}, refs=[
-      ['parentLocationId',['location']],['parentBookId',['book']],['parentChapterId',['chapter']],['eraId',['era']],
-      ['storyEntityId',['chapter','scene']],['scopeLocationId',['location']],['parentMapId',['map']],['locationId',['location']]
-    ];
-    for(const [key,types] of refs){ const ref=f[key]; if(!ref) continue; if((key==='parentLocationId'||key==='parentMapId')&&ref===entity.id){errors.push(`Entity ${entity.id}: ${key} cannot point to itself.`);continue;} expectEntity(entityById,ref,types,`Entity ${entity.id}: ${key}`,errors); }
-    if(entity?.type==='trilogy'){ if(f.protagonistIds!==undefined&&!Array.isArray(f.protagonistIds)) errors.push(`Entity ${entity.id}: protagonistIds must be an array.`); for(const ref of f.protagonistIds||[]) expectEntity(entityById,ref,['character'],`Entity ${entity.id}: protagonistIds`,errors); }
+    const f=entity?.fields||{};
+    for(const spec of referenceFieldsForType(entity?.type)){
+      const value=f[spec.key];
+      if(spec.many){
+        if(value!==undefined&&!Array.isArray(value)) errors.push(`Entity ${entity.id}: ${spec.key} must be an array.`);
+        for(const ref of Array.isArray(value)?value:[]) expectEntity(entityById,ref,spec.types,`Entity ${entity.id}: ${spec.key}`,errors);
+      } else if(value){
+        if(['parentLocationId','parentMapId'].includes(spec.key)&&value===entity.id){ errors.push(`Entity ${entity.id}: ${spec.key} cannot point to itself.`); continue; }
+        expectEntity(entityById,value,spec.types,`Entity ${entity.id}: ${spec.key}`,errors);
+      }
+    }
+    if(entity?.type==='chapter'&&f.parentPartId){ const part=entityById.get(f.parentPartId); if(part?.type==='part'&&f.parentBookId&&part.fields?.parentBookId!==f.parentBookId) errors.push(`Entity ${entity.id}: parentPartId belongs to a different book than parentBookId.`); }
     if(['character','deity'].includes(entity?.type)&&f.portraitMediaId&&!mediaIds.has(f.portraitMediaId)) errors.push(`Entity ${entity.id}: portraitMediaId references missing media ${f.portraitMediaId}.`);
   }
   errors.push(...cycleErrors(data.entities,'parentLocationId','location','Location'),...cycleErrors(data.entities,'parentMapId','map','Map'));
@@ -104,6 +110,7 @@ export function validateBackupSnapshot(data) {
     if(!entityIds.has(rel?.fromId)||!entityIds.has(rel?.toId)) errors.push(`Relation ${rel?.id||'(missing id)'} has a missing endpoint.`);
     if(rel?.fromId===rel?.toId) errors.push(`Relation ${rel?.id||'(missing id)'} cannot link an entry to itself.`);
     if(!RELATION_TYPES.includes(rel?.type)) errors.push(`Relation ${rel?.id||'(missing id)'} has invalid type ${rel?.type||'(missing)'}.`);
+    if(rel?.status&&!RELATION_STATUSES.includes(rel.status)) errors.push(`Relation ${rel?.id||'(missing id)'} has invalid status ${rel.status}.`);
     if(rel?.eraId) expectEntity(entityById,rel.eraId,['era'],`Relation ${rel.id}: eraId`,errors);
   }
 
@@ -117,7 +124,7 @@ export function validateBackupSnapshot(data) {
 
   for(const clue of data.clues){
     if(!clue?.id||!entityIds.has(clue.mysteryId)||entityById.get(clue.mysteryId)?.type!=='mystery') errors.push(`Clue ${clue?.id||'(missing id)'} has an invalid mystery reference.`);
-    if(clue?.storyEntityId){ const t=entityById.get(clue.storyEntityId); if(!t||!['chapter','scene'].includes(t.type)) errors.push(`Clue ${clue.id}: story entry must be a Chapter or Scene.`); }
+    if(clue?.storyEntityId){ const t=entityById.get(clue.storyEntityId); if(!t||!['part','chapter','scene'].includes(t.type)) errors.push(`Clue ${clue.id}: story entry must be a Part, Chapter, or Scene.`); }
     if(clue?.mysteryIds!==undefined&&!Array.isArray(clue.mysteryIds)) errors.push(`Clue ${clue.id}: mysteryIds must be an array.`);
     for(const ref of clue?.mysteryIds||[]) expectEntity(entityById,ref,['mystery'],`Clue ${clue.id}: mysteryIds`,errors);
   }
@@ -126,9 +133,12 @@ export function validateBackupSnapshot(data) {
     if(reveal?.mysteryId) expectEntity(entityById,reveal.mysteryId,['mystery'],`Reveal ${reveal.id}: mysteryId`,errors);
     if(reveal?.targetEntityId) expectEntity(entityById,reveal.targetEntityId,null,`Reveal ${reveal.id}: targetEntityId`,errors);
     if(reveal?.bookId) expectEntity(entityById,reveal.bookId,['book'],`Reveal ${reveal.id}: bookId`,errors);
+    if(reveal?.partId) expectEntity(entityById,reveal.partId,['part'],`Reveal ${reveal.id}: partId`,errors);
     if(reveal?.chapterId) expectEntity(entityById,reveal.chapterId,['chapter'],`Reveal ${reveal.id}: chapterId`,errors);
     if(reveal?.sceneId) expectEntity(entityById,reveal.sceneId,['scene'],`Reveal ${reveal.id}: sceneId`,errors);
+    if(reveal?.partId&&reveal?.bookId&&entityById.get(reveal.partId)?.fields?.parentBookId!==reveal.bookId) errors.push(`Reveal ${reveal.id}: part does not belong to selected book.`);
     if(reveal?.chapterId&&reveal?.bookId&&entityById.get(reveal.chapterId)?.fields?.parentBookId!==reveal.bookId) errors.push(`Reveal ${reveal.id}: chapter does not belong to selected book.`);
+    if(reveal?.chapterId&&reveal?.partId&&entityById.get(reveal.chapterId)?.fields?.parentPartId!==reveal.partId) errors.push(`Reveal ${reveal.id}: chapter does not belong to selected part.`);
     if(reveal?.sceneId&&reveal?.chapterId&&entityById.get(reveal.sceneId)?.fields?.parentChapterId!==reveal.chapterId) errors.push(`Reveal ${reveal.id}: scene does not belong to selected chapter.`);
   }
   const knowledgePoints=new Map();
@@ -137,7 +147,7 @@ export function validateBackupSnapshot(data) {
     if(knowledge?.knowerKind==='character'&&(!entityIds.has(knowledge.knowerEntityId)||entityById.get(knowledge.knowerEntityId)?.type!=='character')) errors.push(`Knowledge ${knowledge?.id||'(missing id)'} has an invalid character knower.`);
     if(!['character','reader'].includes(knowledge?.knowerKind)) errors.push(`Knowledge ${knowledge?.id||'(missing id)'} has invalid knowerKind.`);
     if(!KNOWLEDGE_STATES.includes(knowledge?.state)) errors.push(`Knowledge ${knowledge?.id||'(missing id)'} has invalid state.`);
-    if(knowledge?.storyEntityId){ const t=entityById.get(knowledge.storyEntityId); if(!t||!['book','chapter','scene'].includes(t.type)) errors.push(`Knowledge ${knowledge.id}: story entry must be a Book, Chapter, or Scene.`); }
+    if(knowledge?.storyEntityId){ const t=entityById.get(knowledge.storyEntityId); if(!t||!STORY_POINT_TYPES.includes(t.type)) errors.push(`Knowledge ${knowledge.id}: story entry must be a Book, Part, Chapter, or Scene.`); }
     const pointKey=[knowledge?.subjectEntityId||'',knowledge?.knowerKind||'',knowledge?.knowerEntityId||'',knowledge?.storyEntityId||''].join('\u001f');
     if(knowledgePoints.has(pointKey)) errors.push(`Knowledge ${knowledge?.id||'(missing id)'} duplicates the same subject, knower, and story point as ${knowledgePoints.get(pointKey)}.`); else knowledgePoints.set(pointKey,knowledge?.id||'(missing id)');
   }

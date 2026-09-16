@@ -1,152 +1,326 @@
-# Architecture — V3.0.0
+# Architecture — V3.5.1
 
-## Product boundary
+## Purpose
 
-UnWritten.KayWorks is a private author database and narrative-continuity workspace. It is not a generic SaaS platform and V3 does not introduce another framework, graph database, GIS stack, collaboration protocol, or second authentication system.
+UnWritten.KayWorks is a private author database and narrative-continuity workspace. V3.5 stabilizes the V3/V3.4 architecture for larger data volume and continued feature growth. It does not replace Cloudflare D1/R2, vanilla JavaScript, the hybrid entity model, or the existing domain architecture.
 
-## Runtime
+The architecture is organized around a single principle:
+
+> Canonical fictional facts are stored once; search, graphs, continuity, Reader Preview, impact analysis, timelines, and other intelligence are projections over that canon.
+
+## Runtime layers
 
 ```text
-Cloudflare Access
-      │
-      ▼
-unwritten.kayworks.dev
-      │
-      ▼
+Browser UI
+  ↓
+Feature/domain helpers
+  ↓
+Data adapter / API transport
+  ↓
 Cloudflare Worker
-      │
-      ├── static vanilla HTML/CSS/JS
-      ├── /api/*
-      │    ├── D1 (structured source of truth)
-      │    └── private R2 (binary source of truth)
-      │
-Browser
-      └── IndexedDB: unsaved drafts / read-only V1 migration source only
+  ├── authentication / authorization
+  ├── read/query routes
+  ├── mutation pipeline
+  ├── diagnostics / repair
+  └── backup / media orchestration
+       ↓
+       D1 + private R2
 ```
 
-## Authentication and authorization
+IndexedDB is restricted to unsaved drafts and legacy browser-database migration. It is not canonical production storage.
 
-Every `/api/*` request is authenticated inside the Worker by validating Cloudflare Access's `Cf-Access-Jwt-Assertion` against:
+## Canonical stores
 
-- `TEAM_DOMAIN`
-- `POLICY_AUD`
+D1 stores:
 
-The verified JWT email is compared with `OWNER_EMAILS`.
+- entities
+- relations
+- settings
+- media metadata
+- clues
+- reveals
+- knowledge
+- map versions
+- map markers
+- workspace records
 
-- Owner: read + mutation routes
-- Reviewer: read-only API access
+R2 stores binary media.
 
-UI hiding is convenience only. The Worker rejects reviewer mutations server-side.
+`reference_index` and `narrative_positions` are derived structures, not portable canon stores.
 
-`DEV_AUTH_BYPASS` exists only for local Wrangler development and must not be configured in production.
+## Entity model
 
-## Structured storage
-
-D1 tables:
-
-- `entities`
-- `relations`
-- `settings`
-- `media`
-- `clues`
-- `reveals`
-- `knowledge`
-- `map_versions`
-- `map_markers`
-- `workspace`
-
-The flexible entity envelope remains authoritative:
+The common Entity envelope remains deliberately stable:
 
 ```text
-id, type, name, summary, status, tags, favorite,
-fields, notes, archivedAt, createdAt, updatedAt
+Entity {
+  id
+  type
+  name
+  summary
+  status
+  tags
+  favorite
+  fields
+  notes
+  archivedAt
+  createdAt
+  updatedAt
+}
 ```
 
-Type-specific lore remains in `fields_json` rather than one SQL table per lore type.
+Type-specific authoring data lives in `fields_json`. This provides flexibility without requiring a separate SQL table for every worldbuilding type.
 
-### Workspace records
+### Hot-field rule
 
-The V3 `workspace` table stores non-canon authoring/support records with a small generic envelope:
+A value should remain ordinary flexible JSON when it is primarily authored/displayed prose or low-frequency metadata.
+
+A value should gain a query projection/structured representation when UnWritten repeatedly needs to:
+
+- join on it
+- filter/sort by it
+- validate it
+- order narrative or chronology by it
+- traverse it as a reference
+- calculate derived intelligence from it
+
+Migration 0003 adds generated columns/indexes for the current high-use subset. These are projections of `fields_json`, not competing author-editable values.
+
+## Canonical-reference rule
+
+When a concept has a structured canonical representation, free text cannot act as an independent competing truth.
+
+Examples include location ancestry, story hierarchy, Character homeland/current location, Civilization homeland, Organization headquarters, and Artifact creator/owners.
+
+Legacy text survives where migration cannot safely infer an entity ID. Audit warnings surface those records rather than guessing.
+
+## Narrative position
+
+Narrative position is first-class:
 
 ```text
-id, kind, title, data, createdAt, updatedAt
+Series Overview
+  └── Book
+      ├── Part (optional)
+      │   └── Chapter
+      │       └── Scene
+      └── Chapter
+          └── Scene
 ```
 
-Current kinds include plot threads/beats, contextual notes, tasks, saved views, custom calendars/dates, map layers/routes, whiteboard nodes/edges, manuscript documents, entry revisions, and reader profiles.
+The same domain helpers and D1 `narrative_positions` view underpin story ordering, knowledge-at-point, Reader Preview, reveals, clues, plot coverage, and continuity.
 
-This deliberately avoids creating a dozen tiny databases while keeping these records portable and referentially validated.
+The optional Part level prevents a future Book→Chapter retrofit while retaining direct chapters for books that do not use Parts.
 
-## Derived intelligence
+## Relationships
 
-Graphs, family trees, backlinks, interaction matrices, plot coverage, continuity dashboards, reader views, diplomacy views, location usage, and knowledge-at-scene answers are derived from the canonical stores.
+Relationship records are first-class claims with:
 
-They are views, not parallel truth stores.
+- from / to endpoint IDs
+- relationship type
+- note
+- independent status
+- optional era
+- active-from / active-to scope
+- timestamps
 
-## Optimistic concurrency and revisions
+Relationship status is independent from endpoint status. Default projections omit non-projectable claims/endpoints without deleting them.
 
-Entity editors retain the `updatedAt` value loaded from D1. Update requests send that as `x-base-updated-at`.
+Symmetric and directional semantics are interpreted from one canonical record rather than storing inverse duplicates.
 
-If D1 contains a different revision, the Worker returns HTTP `409` and does not overwrite the newer record.
+## Read architecture
 
-The Worker stores the previous entity snapshot as a `revision` workspace record in the same D1 batch as the entity overwrite, so revision creation and the new entity version commit together.
+### Normal reads
 
-This is deliberately lightweight: no CRDTs, WebSockets, or real-time collaborative editing.
+V3.5 removes `/api/snapshot` from normal runtime data access.
 
-## Referential integrity
-
-Both ordinary writes and backup restore validate domain references. V3 additionally protects:
-
-- multi-node Location and Map hierarchy cycles
-- typed Book / Chapter / Scene references
-- Plot Thread / Plot Beat references
-- Map Layer / Route references
-- marker media/layer/faction/book references
-- custom calendar references
-- reader/manuscript references
-- whiteboard graph references
-
-Entity and Map Version deletion use dedicated cascade routes. Generic store deletion cannot bypass those routes.
-
-## R2 media lifecycle
-
-Live media is private and served through:
+Available boundaries include:
 
 ```text
-/api/media/:id/content
+GET /api/store/:store
+GET /api/store/:store/:key
+GET /api/entities/query
+GET /api/entities/:id/impact
+GET /api/entities/:id/revisions
+GET /api/revisions
 ```
 
-Remote media objects expose a protected URL to the UI. Rendering must use the central media URL abstraction rather than Blob existence.
+The client adapter caches stores independently and coalesces concurrent same-store loads. A successful write patches the relevant cache instead of invalidating all canonical data.
 
-Deleted/superseded live media is copied to `_trash/` before the live key is deleted. Restore uploads stage under `_restore/`.
+`/api/entities/query` establishes the server-side query/search boundary and supports text search, type, status, archive filter, limit, and cursor.
 
-Production should have lifecycle rules for both prefixes so abandoned restore sessions and deleted-media recovery objects do not grow forever. See `CLOUDFLARE-V3-SETUP.md`.
+### Compatibility hydration
 
-## Backup/restore
+Many existing screens are intentionally cross-domain: continuity, maps, story intelligence, and dashboard widgets often need several stores. V3.5 therefore retains an initial compatibility hydration of the stores used by the current UI.
 
-Portable backups remain first-class. Restore follows:
+This is no longer an architectural requirement of the backend. Future screens can move to feature-scoped/lazy loading incrementally using the record/store/query APIs without changing storage formats again.
+
+### Snapshot role
+
+`/api/snapshot` is retained for backup and deep diagnostics. It is no longer the ordinary screen-read primitive.
+
+## Mutation architecture
+
+Structured writes pass through a common Worker boundary:
 
 ```text
-parse → migrate → validate complete snapshot
-      → stage restore manifest/media in R2
-      → verify expected media
-      → transactional D1 batch replacement
-      → finalize R2 media
-      → move superseded live media to trash
-      → cleanup restore staging
+Authorize
+→ load current record
+→ optimistic-concurrency check
+→ normalize server timestamps
+→ domain validation
+→ revision snapshot when applicable
+→ canonical upsert
+→ derived-reference maintenance
+→ one canonical mutation batch
+→ return authoritative record
 ```
 
-D1 and R2 cannot form one distributed ACID transaction. The staged model prevents a failed structured commit from first destroying the prior media set.
+The server preserves `createdAt`, supplies current `updatedAt`, and requires an `x-base-updated-at` precondition when an existing record is changed or deleted. Missing base versions return HTTP 428; stale base versions return HTTP 409. The client remembers record versions from store loads, single-record reads, and entity-query results so future lazy screens retain the same protection.
 
-## Snapshot loading
+Media writes follow the same concurrency principle but also coordinate R2 lifecycle operations.
 
-The browser keeps the existing `getAll(store)` abstraction but coalesces reads into one `/api/snapshot` request. The Worker batches D1 SELECT statements and logs payload/row timing information without adding premature pagination. Cold `revision` rows are excluded from the normal snapshot and fetched lazily for the selected entity; explicit backup exports request revision history separately so recovery remains complete.
+Destructive cascades are planned separately from ordinary writes. Entity, Map Version, Map Marker, Clue/Reveal, and Workspace deletion paths clean dependent structured references before rebuilding derived references. Shared media is retained whenever another surviving map version, layer, marker, portrait, or attachment still uses it. This prevents a valid project from becoming invalid merely because a referenced record was deleted through an otherwise supported route.
 
-## Story Compass
+### Why not event sourcing
 
-Series Overview continues using the existing `trilogy` entity type for compatibility. V3 generalizes its label and fields instead of creating a competing Series table. Story Compass fields are optional planning anchors, not required canon.
+Full Entity snapshots are still adequate for the present recovery/history workflow. Event sourcing/diff history would add major complexity without a demonstrated requirement.
+
+## Database safety nets
+
+Application validation owns type-aware domain rules.
+
+D1 schema 8 adds lower-level structural triggers so normalized records cannot easily reference absent rows even if a future route omits a validator.
+
+Current trigger coverage includes:
+
+- relationship endpoints and era references
+- Clue mystery/story references
+- Reveal mystery/target/story hierarchy references
+- Knowledge subject/knower/story references
+- Map Version map/media references
+- Map Marker map-version/location/media/faction references
+- marker coordinate range 0–100
+
+This is intentionally layered validation rather than attempting to encode every fictional rule into SQL.
+
+## Reverse dependency index
+
+`reference_index` stores derived inbound reference edges:
+
+```text
+source store
+source record
+source field
+→ target entity
+```
+
+It is maintained during normal canonical mutations and regenerated after operations that replace/cascade substantial data.
+
+Because the index is derived:
+
+- it is excluded from backups
+- deep diagnostics can recompute expected edges
+- owner repair can rebuild it
+- rebuild insertion is chunked into bounded D1 batches
+- an interrupted repair cannot corrupt canon; it can only leave derived rows incomplete until rerun
+
+## Diagnostics / self-healing
+
+`GET /api/diagnostics` performs inexpensive structural checks.
+
+`GET /api/diagnostics?deep=1` additionally reconstructs canonical reference edges and compares them with `reference_index`.
+
+Owner-only `POST /api/diagnostics/reference-index/rebuild` repairs the derived index and follows with deep verification.
+
+Diagnostics include counts, orphaned reverse targets, narrative-position integrity, SQLite integrity, expected/missing/stale reference rows, payload size, and elapsed timings.
+
+## Backup migration architecture
+
+Portable backup schema is now **8**.
+
+`BACKUP_MIGRATIONS` contains sequential transforms:
+
+```text
+1→2→3→4→5→6→7→8
+```
+
+The migration driver advances one schema version at a time and rejects future schema versions. Current-version normalization remains idempotent.
+
+This avoids a future monolithic migration function that must understand every historical source shape simultaneously.
+
+SQL migrations remain cumulative and numbered independently:
+
+- `0001_initial.sql`
+- `0002_v3_workspace.sql`
+- `0003_v34_architecture_hardening.sql`
+- `0004_v35_architecture_stabilization.sql`
+
+## Continuity / knowledge performance
+
+Narrative entity indexing in `domain/story.js` is cached by the stable entity-array identity so repeated story comparisons do not rebuild the same lookup map on every comparison.
+
+Scene Continuity performs scene-scoped checks instead of invoking the complete project audit for a single scene.
+
+No general materialized-view/cache layer is introduced yet. Diagnostics and stress tests should provide evidence before more derived data is cached.
+
+## Search
+
+Global entity search now has a server-side service boundary rather than depending entirely on all entities being present in browser memory.
+
+Current backend search is SQL `LIKE` over name, summary, notes, tags JSON, and fields JSON with structured filters. This is intentionally an interface/foundation decision, not a commitment to one search technology forever. A future indexed/FTS implementation can replace the backend without changing callers.
+
+## Stress harness
+
+`scripts/stress.mjs` generates a synthetic project and benchmarks:
+
+- reverse-reference index construction
+- entity search
+- narrative-position scene sorting
+- derived edge volume
+- structured payload size
+
+The default fixture is 10k entities / 50k relations / 25k knowledge records / 5k scenes, configurable via environment variables.
+
+## Security
+
+Cloudflare Access is the authentication provider. The Worker verifies Access JWTs and maps verified email to Owner or Reviewer.
+
+Reviewers are server-enforced read-only. Alternate `workers.dev` and preview endpoints remain disabled.
+
+## Media lifecycle
+
+Private R2 media uses application-controlled protected URLs.
+
+Internal prefixes:
+
+- `_restore/` — staged restore payloads
+- `_trash/` — recoverable deleted/superseded objects
+
+Lifecycle rules should expire these prefixes on suitable schedules.
+
+## Deliberately deferred
+
+V3.5 does **not** add:
+
+- graph database migration
+- event sourcing
+- diff revision storage
+- generic Species entity solely for completeness
+- project merge/import algorithm
+- autonomous cross-link creation
+- generalized materialized-view caching
+- full scheduling/calendar engine
+- generative whiteboard engine
+- universal world-time coordinate model
+
+The last item should be revisited before substantially expanding custom-calendar/history conversion features.
 
 ## Compatibility
 
-V3 schema version: `6`.
-
-V3 preserves the established backup format identifier and migration behavior so historical exports are not renamed merely because the runtime architecture evolved.
+- Application: `3.5.1`
+- Portable backup schema: `8`
+- Backup format identifier: `kayworks-world-bible-backup`
+- Part remains optional
+- old relationship records remain migratable
+- V3.4 schema 7 upgrades to schema 8 without replacing canonical content

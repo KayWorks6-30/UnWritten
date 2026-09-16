@@ -1,6 +1,6 @@
 {
   "name": "unwritten-kayworks",
-  "version": "3.2.0",
+  "version": "3.5.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,7 +13,8 @@
     "db:migrate:remote": "wrangler d1 migrations apply unwritten --remote",
     "deploy": "npm run verify && wrangler deploy",
     "migration:smoke": "node scripts/migration-smoke.mjs",
-    "browser:smoke": "node scripts/browser-smoke.mjs"
+    "browser:smoke": "node scripts/browser-smoke.mjs",
+    "stress": "node scripts/stress.mjs"
   },
   "dependencies": {
     "jose": "6.2.12"

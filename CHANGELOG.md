@@ -1,3 +1,88 @@
+## 3.5.1 — Stabilization audit integrity patch
+
+- Audited the exact V3.5.0 handoff tree and reproduced its verification baseline before modifying it.
+- Hardened entity deletion so secondary structured references are cleaned as well as primary ownership links, including relationship eras, secondary mystery links, Series protagonist arrays, map-marker faction/book references, workspace dependents, and media attachment metadata.
+- Hardened map-version deletion so cross-version routes/layers are cleaned and shared media is never deleted while still referenced by another layer, marker, portrait, map version, or attachment.
+- Added workspace cascade planning for plot-thread beats, calendar dates, whiteboard edges, and map-layer marker cleanup.
+- Deleting Clues/Reveals now clears optional Plot Beat links instead of leaving invalid workspace references.
+- Existing-record mutation/deletion now requires an optimistic-concurrency base version; missing preconditions return HTTP 428 and stale versions remain HTTP 409.
+- Client data access now remembers per-record versions from single-record reads and server-side entity queries, so lazy/query-driven screens retain concurrency protection without whole-store hydration.
+- Added regression coverage for cascade/reference integrity and strict concurrency. Portable schema remains 8.
+
+## 3.5.0 — Architecture stabilization and scale foundation
+
+- Stabilized V3.4 in place rather than rewriting the application.
+- Advanced portable backup schema to **8** and added `0004_v35_architecture_stabilization.sql`.
+- Removed `/api/snapshot` from normal browser data access; added per-store and per-record read routes with independent client caches and same-store request coalescing.
+- Added `/api/entities/query` as the server-side search/filter/cursor boundary while retaining local fallback behavior.
+- Centralized ordinary structured writes through a mutation pipeline covering optimistic concurrency, server timestamp normalization, validation, Entity revision capture, canonical upsert, and reverse-index maintenance.
+- Generalized concurrency timestamps to Settings, Media metadata, and Map Versions and propagated cached base versions through writes/deletes.
+- Added D1 structural safety triggers for normalized relationship, clue, reveal, knowledge, map-version, and map-marker references plus map coordinate bounds.
+- Replaced catch-all portable backup upgrading with explicit sequential migrations from schema 1 through schema 8.
+- Added owner architecture diagnostics with shallow integrity checks, deep expected-vs-actual reference-index verification, and rebuild/repair controls.
+- Reverse-index rebuilds now use bounded D1 batches so large derived indexes do not require one enormous batch; interrupted rebuilds remain recoverable because canon is unchanged.
+- Added `scripts/stress.mjs` with configurable synthetic entity/relation/knowledge/scene counts and timings for reverse indexing, search, narrative sorting, and payload size.
+- Cached narrative entity lookup maps to reduce repeated Book/Part/Chapter/Scene ordering overhead.
+- Extracted low-level browser API transport and Worker record adapters into dedicated modules, creating clearer service boundaries without a framework rewrite.
+- Updated verification, migration smoke, browser-smoke fixture, service-worker cache/versioning, release docs, Cloudflare setup, and architecture documentation for V3.5.
+- Deliberately retained D1/R2, vanilla JS, replacement restore, full revision snapshots, and the V3.4 domain model; universal world-time and generalized materialized caching remain evidence-driven future work.
+
+## 3.4.0 — Architecture hardening and narrative position
+
+- Hardened V3.3 in place rather than rewriting the application.
+- Advanced backup schema to **7** and added `0003_v34_architecture_hardening.sql`.
+- Added optional **Part** story entities and formal Book → optional Part → Chapter → Scene narrative ordering.
+- Added a derived D1 `narrative_positions` view used as the server/query model for narrative position.
+- Added generated/indexed D1 projections for high-use values still canonically stored in `fields_json`.
+- Added independent relationship canon/status (`Canon`, `Provisional`, `Concept`, `Contradicted`, `Shelved`, `Unknown`); legacy relationships migrate to `Canon`.
+- Default graph/intelligence projections now avoid Contradicted/Shelved relationship claims and blocked endpoint entities while retaining those records for author review.
+- Added canonical structured-reference registry used by validation and reference indexing.
+- Added structured semantic references for Character/Civilization homeland, Character current location, Organization headquarters, and Artifact creator/original owner/current owner. Legacy text remains descriptive/migration data and Continuity flags records that still rely on it alone.
+- Added a rebuildable D1 `reference_index` and `/api/entities/:id/impact` so dependency/impact views no longer need to scan every canonical store on demand.
+- Reference-index maintenance is batched with ordinary canonical writes; cascades/restores rebuild it from canonical data.
+- Added Part support to Knowledge, Reader Profiles, Clues, Reveals, manuscript records, Reader Preview, mystery progression, and Story organizer UI.
+- Chapter editor derives/synchronizes Book from selected Part; Reveal save normalizes Book/Part/Chapter from the most-specific selected story point.
+- Scene Continuity now computes scene-scoped warnings directly instead of running the full project continuity pass.
+- Added hardening regression tests covering narrative position, relation status, structured semantic references, reverse indexing, Part-aware story data, and migration/Worker wiring.
+- Intentionally retained full revision snapshots, replacement-style restore, confirmed-only cross-link suggestions, lightweight whiteboard/calendar tools, and text Species modeling rather than overengineering those systems prematurely.
+
+## 3.3.0 — Relationship workspace, family tree, and connection graph
+
+- Expanded existing canonical Relationship records instead of creating any parallel graph or family-tree store.
+- Added a shared relationship-semantics layer for symmetric relationships, directional inverse labels, grouping, and graph direction.
+- Character and ancient-being pages now show grouped Family, Personal, Affiliations, Political, Historical, Creation / Influence, Story, and Other relationships from either endpoint.
+- Relationship records can now be created and edited with explicit From / Type / To fields, notes, era, active-from, and active-to; deletion remains available from the same panel.
+- Added warning-based validation for exact duplicates, inverse duplicates, circular parent claims, and parent/child contradictions while still allowing unusual fictional relationships when intentionally confirmed.
+- Rebuilt Family Tree as a multi-generation derived view supporting parent/child chains, siblings and half-siblings through shared parents, spouses, former spouses, adoptive parents, and guardians with distinct visual styles.
+- Rebuilt Connection Graph as a bounded depth 1–3 local network with entity-type, relationship-type, era, and active-period filters plus family/personal/political/historical/creation/story presets.
+- Directional graph edges use arrowheads only when semantics require direction; edge hover details expose notes, era, and active period.
+- Added direct graph/tree entry points from character and deity relationship panels and click-to-refocus traversal.
+- Optimized graph traversal with indexed adjacency lookup for larger relationship sets.
+- Added targeted relationship-system regression tests.
+- No schema or D1 migration is required; existing backups and canonical IDs remain compatible.
+
+## 3.2.2 — Lore collection card view polish
+
+- Made Cards the default view across All Lore and the main lore collections while preserving the Compact list option.
+- Mixed collections such as All Lore, World, History, Story, and Mysteries now default to grouping by type so large libraries are easier to scan.
+- Reworked non-portrait cards into clean text-first cards instead of showing repetitive placeholder portrait blocks.
+- Archive now uses the same card grid and a total entry count instead of another long vertical list.
+- Added edited-date context and a clearer empty-summary state to collection cards.
+- Versioned collection layout preferences so existing automatic list defaults upgrade once, while new user choices continue to persist normally.
+- No D1 migration is required.
+
+## 3.2.1 — Filter controls and inline detail editing
+
+- keeps multi-tag filtering while adding switchable searchable and browse-all tag pickers
+- lets the tag picker collapse so large tag libraries do not dominate the page
+- changes collection filters to explicit Search/apply behavior, with Enter-to-search support
+- shows one clear total result count above the current collection results
+- removes A–Z grouping and per-group counts to avoid redundant or contradictory organization controls
+- keeps card/list views plus Type, Status, and no-grouping organization
+- adds in-place editing for visible Summary, Author Notes, and structured detail fields without opening the full entry editor
+- preserves the full Edit dialog for larger edits such as tags, status, and multiple fields at once
+- no D1 migration required
+
 ## 3.2.0 — Multi-tag search and organized character library
 
 - Added searchable multi-tag filtering across lore collection pages.

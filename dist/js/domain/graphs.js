@@ -1,12 +1,18 @@
-import { relationsFor, otherEntityId } from './relations.js';
+import { otherEntityId, relationMatchesFilters, relationEndpointsProjectable } from './relations.js';
 
-export function neighborhood(rootId, relations, depth=1){
-  const seen=new Set([rootId]); let frontier=[rootId]; const edges=[];
-  for(let level=0;level<depth;level++){
+export const FAMILY_RELATION_TYPES=['parent_of','child_of','adoptive_parent_of','guardian_of','sibling_of','spouse_of','former_spouse_of'];
+
+function relationIndex(relations){ const map=new Map(); for(const rel of relations){ (map.get(rel.fromId)||map.set(rel.fromId,[]).get(rel.fromId)).push(rel); (map.get(rel.toId)||map.set(rel.toId,[]).get(rel.toId)).push(rel); } return map; }
+
+export function neighborhood(rootId, relations, depth=1, options={}){
+  const maxDepth=Math.max(1,Math.min(3,Number(depth)||1));
+  const allowed=relations.filter(r=>relationMatchesFilters(r,options)&&relationEndpointsProjectable(r,options.entities||[])),index=relationIndex(allowed);
+  const seen=new Set([rootId]),edgeIds=new Set(); let frontier=[rootId]; const edges=[];
+  for(let level=0;level<maxDepth;level++){
     const next=[];
     for(const id of frontier){
-      for(const rel of relationsFor(id,relations)){
-        if(!edges.some(e=>e.id===rel.id)) edges.push(rel);
+      for(const rel of index.get(id)||[]){
+        if(!edgeIds.has(rel.id)){ edgeIds.add(rel.id); edges.push(rel); }
         const other=otherEntityId(rel,id); if(!seen.has(other)){ seen.add(other); next.push(other); }
       }
     }
@@ -22,10 +28,12 @@ export function radialLayout(rootId, ids, width=760, height=460){
   return positions;
 }
 
-export function familyLevels(rootId,relations,maxDepth=3){
+export function familyLevels(rootId,relations,maxDepth=3,entities=[]){
+  const family=relations.filter(r=>FAMILY_RELATION_TYPES.includes(r.type)&&relationMatchesFilters(r)&&relationEndpointsProjectable(r,entities)),index=relationIndex(family);
   const levels=new Map([[rootId,0]]); const queue=[rootId];
-  while(queue.length){ const current=queue.shift(); const level=levels.get(current); if(Math.abs(level)>=maxDepth) continue;
-    for(const rel of relationsFor(current,relations)){
+  while(queue.length){
+    const current=queue.shift(), level=levels.get(current); if(Math.abs(level)>=maxDepth) continue;
+    for(const rel of index.get(current)||[]){
       let other=null,nextLevel=null;
       if(['parent_of','adoptive_parent_of','guardian_of'].includes(rel.type)) { if(rel.fromId===current){other=rel.toId;nextLevel=level+1;} else {other=rel.fromId;nextLevel=level-1;} }
       if(rel.type==='child_of') { if(rel.fromId===current){other=rel.toId;nextLevel=level-1;} else {other=rel.fromId;nextLevel=level+1;} }
@@ -34,4 +42,10 @@ export function familyLevels(rootId,relations,maxDepth=3){
     }
   }
   return levels;
+}
+
+export function familyNetwork(rootId,relations,maxDepth=3,entities=[]){
+  const levels=familyLevels(rootId,relations,maxDepth,entities);
+  const ids=new Set(levels.keys());
+  return {levels,ids:[...ids],edges:relations.filter(r=>FAMILY_RELATION_TYPES.includes(r.type)&&relationMatchesFilters(r)&&relationEndpointsProjectable(r,entities)&&ids.has(r.fromId)&&ids.has(r.toId))};
 }

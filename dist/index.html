@@ -10,7 +10,7 @@
   <link rel="icon" type="image/png" sizes="32x32" href="assets/unwritten-icon-32.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="assets/unwritten-icon-180.png" />
   <link rel="manifest" href="manifest.webmanifest" />
-  <link rel="stylesheet" href="styles.css?v=3.2.0" />
+  <link rel="stylesheet" href="styles.css?v=3.5.1" />
 </head>
 <body>
   <div class="app-shell">
@@ -115,16 +115,21 @@
       <div class="dialog-header">
         <div>
           <div class="eyebrow">STRUCTURED LINK</div>
-          <h2>Add relationship</h2>
+          <h2 id="relation-dialog-title">Add relationship</h2>
         </div>
         <button type="button" class="icon-btn" id="close-relation-dialog" aria-label="Close">×</button>
       </div>
       <div class="dialog-body compact">
-        <input type="hidden" id="relation-from" />
-        <label>Relationship
+        <label>From entity
+          <select id="relation-from" required></select>
+        </label>
+        <label>Relationship type
           <select id="relation-type" required></select>
         </label>
-        <label>Related entry
+        <label>Status
+          <select id="relation-status" required></select>
+        </label>
+        <label>To entity
           <select id="relation-to" required></select>
         </label>
         <label>Era <span class="muted">(optional)</span>
@@ -139,10 +144,11 @@
         <label>Note <span class="muted">(optional)</span>
           <textarea id="relation-note" rows="3"></textarea>
         </label>
+        <div id="relation-warnings" class="relation-warnings" aria-live="polite"></div>
       </div>
       <div class="dialog-footer">
         <button type="button" class="button ghost" id="cancel-relation">Cancel</button>
-        <button type="submit" class="button primary">Add link</button>
+        <button type="submit" class="button primary" id="relation-submit">Add relationship</button>
       </div>
     </form>
   </dialog>
@@ -212,7 +218,7 @@
         <input type="hidden" id="clue-mystery" />
         <label>Label<input id="clue-label" required placeholder="Conflicting historical account" /></label>
         <label>Kind<select id="clue-kind"><option>Clue</option><option>Red herring</option><option>Contradiction</option><option>Evidence</option></select></label>
-        <label>Chapter / scene<select id="clue-story"></select></label>
+        <label>Part / chapter / scene<select id="clue-story"></select></label>
         <label>Also points to mysteries <span class="muted">(optional)</span><select id="clue-related-mysteries" multiple size="4"></select></label>
         <label>Visibility<select id="clue-visibility"><option>Invisible</option><option>Extremely subtle</option><option>Subtle</option><option>Noticeable</option><option>Obvious</option></select></label>
         <label>Description<textarea id="clue-description" rows="4"></textarea></label>
@@ -232,6 +238,7 @@
         <label>Mystery<select id="reveal-mystery"></select></label>
         <label>Revealed lore / target<select id="reveal-target"></select></label>
         <label>Book<select id="reveal-book"></select></label>
+        <label>Part <span class="muted">(optional)</span><select id="reveal-part"></select></label>
         <label>Chapter<select id="reveal-chapter"></select></label>
         <label>Scene<select id="reveal-scene"></select></label>
         <label>What the reader learns<textarea id="reveal-reader" rows="4"></textarea></label>

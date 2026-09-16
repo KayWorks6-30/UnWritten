@@ -1,10 +1,10 @@
-import { APP_VERSION, ENTRY_TYPES, RELATION_TYPES, KNOWLEDGE_STATES, MAP_VARIANTS, createEmptyEntity, validateEntity, validStatusesFor } from './domain/schema.js';
+import { APP_VERSION, ENTRY_TYPES, RELATION_TYPES, RELATION_STATUSES, KNOWLEDGE_STATES, MAP_VARIANTS, createEmptyEntity, validateEntity, validStatusesFor } from './domain/schema.js';
 import { searchEntities, sortEntities, uniqueTags } from './domain/search.js';
-import { relationsFor, otherEntityId, relationDirection, validateRelation } from './domain/relations.js';
+import { relationsFor, otherEntityId, validateRelation, relationDisplay, relationGroupEntries, RELATION_CATEGORY_LABELS, relationshipWarnings, relationSemantics, relationEdgeLabel, relationCategory, isDirectionalRelation } from './domain/relations.js';
 import { compareTimelineEvents, eventRangeLabel } from './domain/timeline.js';
 import { compareStoryRefs, storyPath } from './domain/story.js';
-import { neighborhood, radialLayout, familyLevels } from './domain/graphs.js';
-import { initializeDefaults, getAll, putOne, deleteOne, deleteEntityCascade, deleteMapVersionCascade, getStorageStatus } from './data/db.js';
+import { neighborhood, radialLayout, familyNetwork, FAMILY_RELATION_TYPES } from './domain/graphs.js';
+import { initializeDefaults, getAll, putOne, deleteOne, deleteEntityCascade, deleteMapVersionCascade, getStorageStatus, queryEntities, getDiagnostics, rebuildReferenceIndexRemote } from './data/db.js';
 import { getDraft, getDrafts, saveDraft, deleteDraft } from './data/drafts.js';
 import { hasLegacyDatabase, readLegacyBackup } from './data/legacy.js';
 import { buildBackup, buildZipBackup, downloadBlob, downloadJson, restoreBackup, restoreZipBackup } from './data/backup.js';
@@ -15,7 +15,7 @@ import { continuityWarnings } from './domain/intelligence.js';
 const state = {
   entities: [], relations: [], media: [], settings: {}, clues: [], reveals: [], knowledge: [], mapVersions: [], mapMarkers: [], workspace: [],
   editorEntity: null, editorBaseUpdatedAt: null, conversionSourceId: null, selectedId: null, selectedMapVersionId: null, markerPlacementLocationId: null, mapZoom: 100,
-  mediaObjectUrls: new Map(), drafts: [], storageStatus: null, legacyAvailable: false, collectionFilters: {}, pendingPortraitEntityId: null, mediaCardSizes: new Map(), mediaViewerIds: [], mediaViewerIndex: 0, mediaViewerZoom: 1
+  mediaObjectUrls: new Map(), drafts: [], storageStatus: null, diagnostics: null, legacyAvailable: false, collectionFilters: {}, pendingPortraitEntityId: null, mediaCardSizes: new Map(), mediaViewerIds: [], mediaViewerIndex: 0, mediaViewerZoom: 1, editingRelationId: null
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -73,7 +73,7 @@ const COLLECTIONS={
   characters:{title:'Characters & Beings',description:'Character profiles and sentient beings, including ancient beings and gods, with arcs, secrets, knowledge, beliefs, family links, and relationships.',types:['character','deity'],defaultType:'character'},
   geography:{title:'Geography',description:'Hierarchical locations from worlds and continents down to districts, ruins, and landmarks.',types:['location'],defaultType:'location'},
   history:{title:'History',description:'Historical events and eras with sortable uncertain dates, competing interpretations, and author truth.',types:['event','era'],defaultType:'event'},
-  story:{title:'Story',description:'Trilogy overview, books, chapters, and scenes kept separate from objective world lore.',types:['trilogy','book','chapter','scene'],defaultType:'book'},
+  story:{title:'Story',description:'Series overview, books, optional parts, chapters, and scenes kept separate from objective world lore.',types:['trilogy','book','part','chapter','scene'],defaultType:'book'},
   mysteries:{title:'Mysteries & Foreshadowing',description:'Track true answers, structured clues, red herrings, intended interpretations, reveals, and payoffs.',types:['mystery','foreshadowing'],defaultType:'mystery'},
   ideas:{title:'Idea Inbox',description:'Capture ideas immediately, then convert useful ones into full structured entries without copy/paste.',types:['idea'],defaultType:'idea'},
   questions:{title:'Unresolved Questions',description:'Keep author questions visible until they are answered, shelved, or developed further.',types:['question'],defaultType:'question'}
@@ -104,27 +104,32 @@ function renderDashboard(){
     <div class="dashboard-widget-grid section">${cards.join('')}</div>`;
 }
 
+const COLLECTION_PREFERENCES_KEY='unwritten.collectionPreferences.v2';
 function collectionPreferenceDefaults(routeName){
-  return routeName==='characters'
-    ? {sort:'name-asc',group:'alpha',view:'cards'}
-    : {sort:'updated-desc',group:'none',view:'list'};
+  const mixedByType=['entries','world','history','story','mysteries'];
+  return {
+    sort:routeName==='characters'?'name-asc':'updated-desc',
+    group:mixedByType.includes(routeName)?'type':'none',
+    view:'cards'
+  };
 }
 function loadCollectionPreferences(routeName){
   const defaults=collectionPreferenceDefaults(routeName);
   try{
-    const all=JSON.parse(localStorage.getItem('unwritten.collectionPreferences')||'{}');
-    return {...defaults,...(all[routeName]||{})};
+    const all=JSON.parse(localStorage.getItem(COLLECTION_PREFERENCES_KEY)||'{}');
+    const loaded={...defaults,...(all[routeName]||{})};
+    if(loaded.group==='alpha') loaded.group='none';
+    return loaded;
   }catch{return defaults;}
 }
 function saveCollectionPreferences(routeName,prefs){
   try{
-    const all=JSON.parse(localStorage.getItem('unwritten.collectionPreferences')||'{}');
+    const all=JSON.parse(localStorage.getItem(COLLECTION_PREFERENCES_KEY)||'{}');
     all[routeName]=prefs;
-    localStorage.setItem('unwritten.collectionPreferences',JSON.stringify(all));
+    localStorage.setItem(COLLECTION_PREFERENCES_KEY,JSON.stringify(all));
   }catch{}
 }
 function collectionGroupKey(entity,mode){
-  if(mode==='alpha') return /^[A-Z]$/i.test((entity.name||'').trim()[0]||'') ? (entity.name||'').trim()[0].toUpperCase() : '#';
   if(mode==='type') return typeLabel(entity.type);
   if(mode==='status') return entity.status||'No status';
   return '';
@@ -132,10 +137,11 @@ function collectionGroupKey(entity,mode){
 function collectionCard(entity,currentRoute='entries'){
   const portraitId=entity.fields?.portraitMediaId;
   const portrait=portraitId?state.media.find(m=>m.id===portraitId):null;
+  const showPortrait=Boolean(portrait);
   const tags=(entity.tags||[]).slice(0,5);
-  return `<button type="button" class="collection-entity-card ${state.selectedId===entity.id&&route().name===currentRoute?'is-selected':''}" data-open-entry="${esc(entity.id)}" data-open-route="${esc(currentRoute)}">
-    ${portrait?`<span class="collection-card-portrait"><img src="${esc(mediaUrl(portrait))}" alt="" /></span>`:'<span class="collection-card-portrait collection-card-placeholder" aria-hidden="true">✦</span>'}
-    <span class="collection-card-body"><span class="collection-card-top"><span class="list-title">${esc(entity.name||'Untitled')}</span>${entity.favorite?'<span class="collection-favorite" title="Favorite">★</span>':''}</span><span class="list-meta">${esc(typeLabel(entity.type))} • ${esc(entity.status||'Unknown')}</span>${entity.summary?`<span class="collection-card-summary">${esc(entity.summary)}</span>`:''}${tags.length?`<span class="collection-card-tags">${tags.map(t=>`<span class="badge">#${esc(t)}</span>`).join('')}${(entity.tags||[]).length>tags.length?`<span class="muted small">+${(entity.tags||[]).length-tags.length}</span>`:''}</span>`:''}</span>
+  return `<button type="button" class="collection-entity-card ${showPortrait?'has-portrait':'text-only'} ${state.selectedId===entity.id&&route().name===currentRoute?'is-selected':''}" data-open-entry="${esc(entity.id)}" data-open-route="${esc(currentRoute)}">
+    ${showPortrait?`<span class="collection-card-portrait"><img src="${esc(mediaUrl(portrait))}" alt="" /></span>`:''}
+    <span class="collection-card-body"><span class="collection-card-top"><span class="list-title">${esc(entity.name||'Untitled')}</span>${entity.favorite?'<span class="collection-favorite" title="Favorite">★</span>':''}</span><span class="list-meta">${esc(typeLabel(entity.type))} • ${esc(entity.status||'Unknown')} • edited ${esc(fmtDate(entity.updatedAt))}</span>${entity.summary?`<span class="collection-card-summary">${esc(entity.summary)}</span>`:'<span class="collection-card-summary muted">No summary yet.</span>'}${tags.length?`<span class="collection-card-tags">${tags.map(t=>`<span class="badge">#${esc(t)}</span>`).join('')}${(entity.tags||[]).length>tags.length?`<span class="muted small">+${(entity.tags||[]).length-tags.length}</span>`:''}</span>`:''}</span>
   </button>`;
 }
 function renderCollectionResults(results,routeName,{group='none',view='list'}={}){
@@ -144,7 +150,7 @@ function renderCollectionResults(results,routeName,{group='none',view='list'}={}
   const groups=new Map();
   for(const entity of results){const key=collectionGroupKey(entity,group);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(entity);}
   const ordered=[...groups.entries()].sort(([a],[b])=>String(a).localeCompare(String(b),undefined,{sensitivity:'base',numeric:true}));
-  return ordered.map(([key,items])=>`<section class="collection-group"><div class="collection-group-heading"><h3>${esc(key)}</h3><span class="muted small">${items.length}</span></div>${renderItems(items)}</section>`).join('');
+  return ordered.map(([key,items])=>`<section class="collection-group"><div class="collection-group-heading"><h3>${esc(key)}</h3></div>${renderItems(items)}</section>`).join('');
 }
 
 function renderCollection(routeName,selectedId){
@@ -164,23 +170,31 @@ function renderCollection(routeName,selectedId){
       <section class="card collection-filter-card" aria-label="${esc(cfg.title)} filters">
         <div class="filter-row"><input id="collection-search" type="search" placeholder="Search names, notes, fields, tags…" value="${esc(savedFilters.q)}" />${typeOptions}<select id="collection-status"><option value="">All statuses</option>${statusSet.map(s=>`<option ${savedFilters.status===s?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
         <div class="collection-tag-filter">
-          <div class="collection-tag-filter-head"><div><strong>Tags</strong><div class="muted small">Select several tags, then choose whether entries must match all or any of them.</div></div><select id="collection-tag-mode" aria-label="Tag matching"><option value="all" ${savedFilters.tagMode!=='any'?'selected':''}>Match all selected</option><option value="any" ${savedFilters.tagMode==='any'?'selected':''}>Match any selected</option></select></div>
-          <input id="collection-tag-search" type="search" placeholder="Find a tag…" autocomplete="off" />
+          <div class="collection-tag-filter-head"><div><strong>Tags</strong><div class="muted small">Choose multiple tags. Search the tag list, browse the full list, or collapse it when you do not need it.</div></div><div class="tag-filter-actions"><select id="collection-tag-mode" aria-label="Tag matching"><option value="all" ${savedFilters.tagMode!=='any'?'selected':''}>Match all selected</option><option value="any" ${savedFilters.tagMode==='any'?'selected':''}>Match any selected</option></select><button class="button ghost" type="button" id="toggle-tag-picker" aria-expanded="true">Hide tag picker</button></div></div>
+          <div id="collection-tag-picker" class="collection-tag-picker">
+            <div class="tag-picker-tabs" role="group" aria-label="Tag picker mode"><button class="button tag-picker-tab active" type="button" data-tag-picker-mode="search">Search tags</button><button class="button ghost tag-picker-tab" type="button" data-tag-picker-mode="browse">Browse all</button></div>
+            <div id="tag-picker-search-panel"><input id="collection-tag-search" type="search" placeholder="Find a tag…" autocomplete="off" /><div id="collection-tag-options" class="tag-picker-options"></div></div>
+            <div id="tag-picker-browse-panel" class="hidden"><label class="tag-browse-label">Browse tags<select id="collection-tag-browse"><option value="">Choose a tag…</option>${tags.map(t=>`<option value="${esc(t)}">#${esc(t)}</option>`).join('')}</select></label></div>
+          </div>
           <div id="collection-selected-tags" class="selected-tag-row"></div>
-          <div id="collection-tag-options" class="tag-picker-options"></div>
         </div>
         <div class="collection-organize-row">
           <label>Sort<select id="collection-sort"><option value="name-asc" ${prefs.sort==='name-asc'?'selected':''}>Name A–Z</option><option value="name-desc" ${prefs.sort==='name-desc'?'selected':''}>Name Z–A</option><option value="updated-desc" ${prefs.sort==='updated-desc'?'selected':''}>Recently edited</option><option value="updated-asc" ${prefs.sort==='updated-asc'?'selected':''}>Least recently edited</option><option value="created-desc" ${prefs.sort==='created-desc'?'selected':''}>Newest created</option><option value="favorites" ${prefs.sort==='favorites'?'selected':''}>Favorites first</option></select></label>
-          <label>Group<select id="collection-group"><option value="none" ${prefs.group==='none'?'selected':''}>No grouping</option><option value="alpha" ${prefs.group==='alpha'?'selected':''}>A–Z</option><option value="type" ${prefs.group==='type'?'selected':''}>Type</option><option value="status" ${prefs.group==='status'?'selected':''}>Status</option></select></label>
+          <label>Group<select id="collection-group"><option value="none" ${prefs.group==='none'?'selected':''}>No grouping</option><option value="type" ${prefs.group==='type'?'selected':''}>Type</option><option value="status" ${prefs.group==='status'?'selected':''}>Status</option></select></label>
           <label>View<select id="collection-view"><option value="list" ${prefs.view==='list'?'selected':''}>Compact list</option><option value="cards" ${prefs.view==='cards'?'selected':''}>Cards</option></select></label>
         </div>
-        <div class="collection-filter-meta"><span class="muted small" id="collection-count"></span><button class="button ghost" type="button" id="clear-collection-filters">Clear filters</button></div>
+        <div class="collection-filter-meta"><div class="collection-filter-actions"><button class="button primary" type="button" id="apply-collection-filters">Search</button><button class="button ghost" type="button" id="clear-collection-filters">Clear filters</button></div><span class="muted small">Filters update when you press Search. Sort, group, and view only reorganize the current results.</span></div>
       </section>
       ${detail}
-      <section class="card collection-results"><div class="section-title"><div><h2>${esc(cfg.title)} entries</h2><div class="muted small">Search, combine tags, then organize the results however you prefer.</div></div></div><div id="collection-list"></div></section>
+      <section class="card collection-results"><div class="section-title"><div><h2>${esc(cfg.title)} entries</h2><div class="muted small">Search, combine tags, then organize the results however you prefer.</div></div><strong id="collection-count" class="collection-result-count"></strong></div><div id="collection-list"></div></section>
     </div>`;
 
   let selectedTags=[...savedFilters.tags];
+  let appliedFilters={...savedFilters,tags:[...savedFilters.tags]};
+  let pickerOpen=true;
+  let pickerMode='search';
+  const readStagedFilters=()=>({q:$('#collection-search')?.value||'',type:$('#collection-type')?.value||'',status:$('#collection-status')?.value||'',tags:[...selectedTags],tagMode:$('#collection-tag-mode')?.value||'all'});
+  const currentPrefs=()=>({sort:$('#collection-sort')?.value||prefs.sort,group:$('#collection-group')?.value||prefs.group,view:$('#collection-view')?.value||prefs.view});
   const renderTagPicker=()=>{
     const q=($('#collection-tag-search')?.value||'').trim().toLowerCase();
     const visible=tags.filter(t=>!q||t.toLowerCase().includes(q));
@@ -188,24 +202,28 @@ function renderCollection(routeName,selectedId){
     if(chosen) chosen.innerHTML=selectedTags.length?selectedTags.map(t=>`<button type="button" class="selected-tag-chip" data-remove-collection-tag="${esc(t)}">#${esc(t)} <span aria-hidden="true">×</span></button>`).join(''):'<span class="muted small">No tag filters selected.</span>';
     const options=$('#collection-tag-options');
     if(options) options.innerHTML=visible.length?visible.map(t=>`<label class="tag-picker-option"><input type="checkbox" value="${esc(t)}" ${selectedTags.includes(t)?'checked':''}/><span>#${esc(t)}</span></label>`).join(''):'<span class="muted small">No tags match that search.</span>';
+    const browse=$('#collection-tag-browse'); if(browse) browse.value='';
   };
-  const update=()=>{
-    const q=$('#collection-search')?.value||'',type=$('#collection-type')?.value||'',status=$('#collection-status')?.value||'',tagMode=$('#collection-tag-mode')?.value||'all';
-    const currentPrefs={sort:$('#collection-sort')?.value||prefs.sort,group:$('#collection-group')?.value||prefs.group,view:$('#collection-view')?.value||prefs.view};
-    state.collectionFilters[routeName]={q,type,status,tags:[...selectedTags],tagMode};
-    saveCollectionPreferences(routeName,currentPrefs);
-    const matches=searchEntities(pool,q,{type:type||null,status:status||null,tags:selectedTags,tagMode});
-    const results=sortEntities(matches,currentPrefs.sort);
-    $('#collection-list').innerHTML=results.length?renderCollectionResults(results,routeName,currentPrefs):emptyState(pool.length?'No matches':'No entries yet',pool.length?'Try a different search, tag combination, or organization option.':'Create the first entry in this section to begin.');
-    const count=$('#collection-count'); if(count) count.textContent=`Showing ${results.length} of ${pool.length} ${pool.length===1?'entry':'entries'}${selectedTags.length?` • ${selectedTags.length} tag filter${selectedTags.length===1?'':'s'}`:''}.`;
+  const renderResults=()=>{
+    const viewPrefs=currentPrefs(); saveCollectionPreferences(routeName,viewPrefs);
+    const matches=searchEntities(pool,appliedFilters.q,{type:appliedFilters.type||null,status:appliedFilters.status||null,tags:appliedFilters.tags,tagMode:appliedFilters.tagMode});
+    const results=sortEntities(matches,viewPrefs.sort);
+    $('#collection-list').innerHTML=results.length?renderCollectionResults(results,routeName,viewPrefs):emptyState(pool.length?'No matches':'No entries yet',pool.length?'Try a different search or tag combination.':'Create the first entry in this section to begin.');
+    const count=$('#collection-count'); if(count) count.textContent=`${results.length} ${results.length===1?'result':'results'}`;
   };
-  ['#collection-search','#collection-type','#collection-status','#collection-tag-mode','#collection-sort','#collection-group','#collection-view'].forEach(sel=>$(sel)?.addEventListener('input',update));
+  const applyFilters=()=>{ appliedFilters=readStagedFilters(); state.collectionFilters[routeName]={...appliedFilters,tags:[...appliedFilters.tags]}; renderResults(); };
+  $('#apply-collection-filters')?.addEventListener('click',applyFilters);
+  $('#collection-search')?.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();applyFilters();}});
+  ['#collection-sort','#collection-group','#collection-view'].forEach(sel=>$(sel)?.addEventListener('input',renderResults));
   $('#collection-tag-search')?.addEventListener('input',renderTagPicker);
-  $('#collection-tag-options')?.addEventListener('change',event=>{const input=event.target.closest('input[type="checkbox"]');if(!input)return;selectedTags=input.checked?[...new Set([...selectedTags,input.value])]:selectedTags.filter(t=>t!==input.value);renderTagPicker();update();});
-  $('#collection-selected-tags')?.addEventListener('click',event=>{const button=event.target.closest('[data-remove-collection-tag]');if(!button)return;selectedTags=selectedTags.filter(t=>t!==button.dataset.removeCollectionTag);renderTagPicker();update();});
-  $('#clear-collection-filters')?.addEventListener('click',()=>{ ['#collection-search','#collection-type','#collection-status','#collection-tag-search'].forEach(sel=>{const el=$(sel);if(el)el.value='';}); selectedTags=[]; const mode=$('#collection-tag-mode');if(mode)mode.value='all';renderTagPicker();update();$('#collection-search')?.focus(); });
-  renderTagPicker(); update();
-  if(selected) v3().loadEntryRevisions(selected.id);
+  $('#collection-tag-options')?.addEventListener('change',event=>{const input=event.target.closest('input[type="checkbox"]');if(!input)return;selectedTags=input.checked?[...new Set([...selectedTags,input.value])]:selectedTags.filter(t=>t!==input.value);renderTagPicker();});
+  $('#collection-tag-browse')?.addEventListener('change',event=>{const value=event.target.value;if(!value)return;selectedTags=[...new Set([...selectedTags,value])];renderTagPicker();});
+  $('#collection-selected-tags')?.addEventListener('click',event=>{const button=event.target.closest('[data-remove-collection-tag]');if(!button)return;selectedTags=selectedTags.filter(t=>t!==button.dataset.removeCollectionTag);renderTagPicker();});
+  document.querySelectorAll('[data-tag-picker-mode]').forEach(button=>button.addEventListener('click',()=>{pickerMode=button.dataset.tagPickerMode;document.querySelectorAll('[data-tag-picker-mode]').forEach(b=>{b.classList.toggle('active',b===button);b.classList.toggle('ghost',b!==button);});$('#tag-picker-search-panel')?.classList.toggle('hidden',pickerMode!=='search');$('#tag-picker-browse-panel')?.classList.toggle('hidden',pickerMode!=='browse');}));
+  $('#toggle-tag-picker')?.addEventListener('click',event=>{pickerOpen=!pickerOpen;$('#collection-tag-picker')?.classList.toggle('hidden',!pickerOpen);event.currentTarget.textContent=pickerOpen?'Hide tag picker':'Show tag picker';event.currentTarget.setAttribute('aria-expanded',String(pickerOpen));});
+  $('#clear-collection-filters')?.addEventListener('click',()=>{ ['#collection-search','#collection-type','#collection-status','#collection-tag-search'].forEach(sel=>{const el=$(sel);if(el)el.value='';}); selectedTags=[]; const mode=$('#collection-tag-mode');if(mode)mode.value='all';renderTagPicker();appliedFilters={...defaults,tags:[]};state.collectionFilters[routeName]={...appliedFilters};renderResults(); });
+  renderTagPicker(); renderResults();
+  if(selected){ v3().loadEntryRevisions(selected.id); v3().loadEntryImpact(selected.id); }
 }
 
 function renderTrilogyOverview(){
@@ -219,15 +237,69 @@ function displayFieldValue(field,value,routeName){
   return `<div class="prose">${text(value)}</div>`;
 }
 
+function inlineFieldControl(entity,field,value=''){
+  const common=`data-inline-input="1" data-field-key="${esc(field.key)}"`;
+  if(field.type==='textarea') return `<textarea ${common} rows="5">${esc(value)}</textarea>`;
+  if(field.type==='select') return `<select ${common}><option value=""></option>${(field.options||[]).map(o=>`<option value="${esc(o)}" ${String(value)===String(o)?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
+  if(field.type==='entity') return `<select ${common}><option value="">None selected</option>${entityOptions(field.entityTypes,value,entity.id)}</select>`;
+  return `<input ${common} type="${field.type==='number'?'number':'text'}" value="${esc(value)}" />`;
+}
+function inlineEditableSection(entity,field,value,routeName){
+  return `<section class="detail-section inline-edit-section" data-inline-section="${esc(field.key)}"><div class="inline-field-heading"><button type="button" class="inline-field-title" data-inline-edit-field="${esc(field.key)}" data-inline-edit-entity="${esc(entity.id)}" title="Edit ${esc(field.label)}"><span>${esc(field.label)}</span><span class="inline-edit-icon" aria-hidden="true">✎</span></button></div><div class="inline-field-display">${displayFieldValue(field,value,routeName)}</div><form class="inline-edit-form hidden" data-inline-edit-form="${esc(field.key)}" data-inline-edit-entity="${esc(entity.id)}">${inlineFieldControl(entity,field,value)}<div class="actions"><button class="button primary" type="submit">Save</button><button class="button ghost" type="button" data-inline-edit-cancel="1">Cancel</button></div></form></section>`;
+}
+function inlineSimpleSection(entity,key,label,value,routeName){
+  const field={key,label,type:'textarea'};
+  return inlineEditableSection(entity,field,value,routeName);
+}
+async function saveInlineField(form){
+  const entity=entityById(form.dataset.inlineEditEntity); if(!entity) return;
+  const input=form.querySelector('[data-inline-input]'); if(!input) return;
+  const key=input.dataset.fieldKey, value=input.value.trim();
+  const updated=structuredClone(entity);
+  if(key==='summary'||key==='notes') updated[key]=value;
+  else { updated.fields={...(updated.fields||{})}; updated.fields[key]=value; }
+  updated.updatedAt=now();
+  const errors=validateEntity(updated); if(errors.length) return toast(errors[0]);
+  try{ await putOne('entities',updated,{baseUpdatedAt:entity.updatedAt}); }
+  catch(error){ if(error.status===409) return toast('This entry changed elsewhere. Reload it before editing this field.'); return toast(error.message||'Could not save field.'); }
+  await refreshState(); renderRoute(); toast(`${key==='summary'?'Summary':key==='notes'?'Author notes':ENTRY_TYPES[updated.type]?.fields?.find(f=>f.key===key)?.label||'Field'} updated.`);
+}
+
 function hierarchyBreadcrumb(entity){
   const parts=[]; let current=entity; let guard=0;
-  while(current&&guard++<12){ parts.unshift(current); let parentId=null; if(current.type==='location') parentId=current.fields?.parentLocationId; if(current.type==='chapter') parentId=current.fields?.parentBookId; if(current.type==='scene') parentId=current.fields?.parentChapterId; current=parentId?entityById(parentId):null; }
+  while(current&&guard++<12){
+    parts.unshift(current); let parentId=null;
+    if(current.type==='location') parentId=current.fields?.parentLocationId;
+    if(current.type==='part') parentId=current.fields?.parentBookId;
+    if(current.type==='chapter') parentId=current.fields?.parentPartId||current.fields?.parentBookId;
+    if(current.type==='scene') parentId=current.fields?.parentChapterId;
+    current=parentId?entityById(parentId):null;
+  }
   return parts.length>1?`<div class="breadcrumbs">${parts.map((p,i)=>`${i?'› ':''}<button class="inline-link" data-open-entry="${esc(p.id)}" data-open-route="${esc(sectionForType(p.type))}">${esc(p.name)}</button>`).join(' ')}</div>`:'';
 }
 
+function relationshipMeta(rel){
+  const bits=[]; const era=rel.eraId?entityById(rel.eraId):null;
+  if(rel.status&&rel.status!=='Canon') bits.push(rel.status);
+  if(era) bits.push(era.name);
+  if(rel.activeFrom||rel.activeTo) bits.push(`${rel.activeFrom||'…'} → ${rel.activeTo||'…'}`);
+  if(rel.note) bits.push(rel.note);
+  return bits;
+}
+function relationshipRow(entity,rel){
+  const other=entityById(otherEntityId(rel,entity.id)); if(!other) return '';
+  const display=relationDisplay(rel,entity.id),meta=relationshipMeta(rel);
+  return `<div class="relationship-row"><button type="button" class="relationship-main" data-open-entry="${esc(other.id)}" data-open-route="${esc(other.archivedAt?'archive':sectionForType(other.type))}"><span class="relationship-label">${esc(display.label)}</span><span class="list-title">${esc(other.name)}</span><span class="list-meta">${esc(typeLabel(other.type))}${meta.length?` • ${meta.map(esc).join(' • ')}`:''}</span></button><div class="relationship-actions"><button class="icon-btn" data-edit-relation="${esc(rel.id)}" aria-label="Edit relationship" title="Edit relationship">✎</button><button class="icon-btn" data-delete-relation="${esc(rel.id)}" aria-label="Remove relationship" title="Remove relationship">×</button></div></div>`;
+}
+function renderRelationshipPanel(entity){
+  const groups=relationGroupEntries(entity.id,state.relations); const preferred=['family','personal','affiliation','political','historical','creation','story','other'];
+  const sections=preferred.filter(key=>groups[key]?.length).map(key=>`<div class="relationship-group"><h4>${esc(RELATION_CATEGORY_LABELS[key]||key)}</h4><div class="relationship-list">${groups[key].map(({relation})=>relationshipRow(entity,relation)).join('')}</div></div>`).join('');
+  const heading=['character','deity'].includes(entity.type)?'Relationships':'Structured relationships';
+  return `<section class="detail-section relationship-panel"><div class="section-title"><div><h3>${heading}</h3><div class="muted small">Canonical structured links, interpreted naturally from this entry’s point of view.</div></div><div class="actions"><button class="button ghost" data-add-relation="${esc(entity.id)}">+ Relationship</button>${['character','deity'].includes(entity.type)?`<a class="button ghost" href="#/graphs/${esc(entity.id)}">Trees & graphs</a>`:''}</div></div>${sections||'<div class="muted small">No structured relationships yet.</div>'}</section>`;
+}
+
 function renderEntryDetail(entity,routeName='entries'){
-  const def=ENTRY_TYPES[entity.type]; const rels=relationsFor(entity.id,state.relations);
-  const relatedHtml=rels.map(rel=>{ const other=entityById(otherEntityId(rel,entity.id)); if(!other) return ''; const dir=relationDirection(rel,entity.id)==='outgoing'?'→':'←'; return `<div class="list-item related-row"><button type="button" class="related-open" data-open-entry="${esc(other.id)}" data-open-route="${esc(other.archivedAt?'archive':sectionForType(other.type))}"><span class="list-title">${esc(other.name)}</span><span class="list-meta">${dir} ${esc(rel.type.replaceAll('_',' '))}${rel.eraId?` • ${esc(entityById(rel.eraId)?.name||'Era')}`:''}${rel.activeFrom||rel.activeTo?` • ${esc([rel.activeFrom||'…',rel.activeTo||'…'].join(' → '))}`:''}${rel.note?` • ${esc(rel.note)}`:''}</span></button><button class="icon-btn" data-delete-relation="${esc(rel.id)}" aria-label="Remove link">×</button></div>`; }).join('');
+  const def=ENTRY_TYPES[entity.type];
   const linkedMedia=state.media.filter(m=>(m.entityIds||[]).includes(entity.id));
   const detailFields=(def?.fields||[]).filter(f=>!f.knowledge&&entity.fields?.[f.key]!==undefined&&String(entity.fields[f.key]).trim()!=='');
   const knowledgeFields=(def?.fields||[]).filter(f=>f.knowledge&&entity.fields?.[f.key]&&String(entity.fields[f.key]).trim());
@@ -235,15 +307,15 @@ function renderEntryDetail(entity,routeName='entries'){
   return `${entity.archivedAt?'<div class="archive-banner">This entry is archived. It remains in backups and can be restored or permanently deleted.</div>':''}${hierarchyBreadcrumb(entity)}
     <div class="detail-head"><div><div class="eyebrow">${esc(def?.group||'ENTRY')} • ${esc(def?.label||entity.type)}</div><h2>${esc(entity.name)}</h2><div class="badges">${badge(entity.status)}${(entity.tags||[]).map(t=>`<span class="badge">#${esc(t)}</span>`).join('')}</div></div><div class="actions">${specialActions}<button class="button ghost" data-toggle-favorite="${esc(entity.id)}">${entity.favorite?'★ Favorited':'☆ Favorite'}</button><button class="button" data-edit-entry="${esc(entity.id)}">Edit</button><button class="button ghost detail-close" data-close-detail="${esc(routeName)}" aria-label="Close ${esc(entity.name)} details">Close</button></div></div>
     ${portraitCapable(entity)?renderCharacterPortrait(entity,linkedMedia):''}
-    ${entity.summary?`<section class="detail-section"><h3>Summary</h3><div class="prose">${text(entity.summary)}</div></section>`:''}
+    ${entity.summary?inlineSimpleSection(entity,'summary','Summary',entity.summary,routeName):''}
     ${knowledgeFields.length?`<section class="detail-section"><h3>Knowledge layers</h3><div class="knowledge-grid">${knowledgeFields.map(f=>`<div class="knowledge-card"><h4>${esc(f.label)}</h4><div class="prose">${text(entity.fields[f.key])}</div></div>`).join('')}</div></section>`:''}
-    ${detailFields.map(f=>`<section class="detail-section"><h3>${esc(f.label)}</h3>${displayFieldValue(f,entity.fields[f.key],routeName)}</section>`).join('')}
+    ${detailFields.map(f=>inlineEditableSection(entity,f,entity.fields[f.key],routeName)).join('')}
     ${entity.type==='mystery'?renderMysteryTracking(entity):''}
     ${entity.type==='character'?renderCharacterKnowledgeSummary(entity):''}
     ${entity.type==='location'?renderLocationMapLinks(entity):''}
-    ${entity.notes?`<section class="detail-section"><h3>Author Notes</h3><div class="prose">${text(entity.notes)}</div></section>`:''}
+    ${entity.notes?inlineSimpleSection(entity,'notes','Author Notes',entity.notes,routeName):''}
     ${v3().renderEntryEnhancements(entity)}
-    <section class="detail-section"><div class="section-title"><h3>Related entries</h3><button class="button ghost" data-add-relation="${esc(entity.id)}">+ Link entry</button></div><div class="list">${relatedHtml||'<div class="muted small">No structured links yet.</div>'}</div></section>
+    ${renderRelationshipPanel(entity)}
     <section class="detail-section"><div class="section-title"><h3>Images & media</h3><div class="actions"><button class="button ghost" data-add-media="${esc(entity.id)}">+ Attach media</button></div></div>${renderMiniMedia(linkedMedia,entity)}</section>
     <section class="detail-section"><div class="muted small">Created ${esc(fmtDate(entity.createdAt))} • Last edited ${esc(fmtDate(entity.updatedAt))}</div></section>`;
 }
@@ -397,17 +469,17 @@ function renderMedia(){
   $('#media-search').addEventListener('input',update); update();
 }
 
-function revealStoryPath(reveal){ const ref=reveal.sceneId||reveal.chapterId||reveal.bookId; return ref?storyPath(entityById(ref),state.entities):''; }
+function revealStoryPath(reveal){ const ref=reveal.sceneId||reveal.chapterId||reveal.partId||reveal.bookId; return ref?storyPath(entityById(ref),state.entities):''; }
 function renderReveals(){
   const mysteries=activeEntities().filter(e=>e.type==='mystery'); const foreshadow=activeEntities().filter(e=>e.type==='foreshadowing');
-  const rows=[...state.clues.flatMap(c=>[c.mysteryId,...(c.mysteryIds||[])].filter(Boolean).map(mysteryId=>({kind:c.kind||'Clue',title:c.label||'Clue',storyId:c.storyEntityId,summary:c.description,mysteryId,visibility:c.visibility}))),...state.reveals.map(r=>({kind:'Reveal',title:r.title,storyId:r.sceneId||r.chapterId||r.bookId,summary:r.summary,mysteryId:r.mysteryId})),...foreshadow.map(f=>({kind:'Foreshadowing',title:f.name,storyId:f.fields?.storyEntityId,summary:f.fields?.event,mysteryId:null,visibility:f.fields?.visibility}))].sort((a,b)=>compareStoryRefs(a.storyId,b.storyId,state.entities));
+  const rows=[...state.clues.flatMap(c=>[c.mysteryId,...(c.mysteryIds||[])].filter(Boolean).map(mysteryId=>({kind:c.kind||'Clue',title:c.label||'Clue',storyId:c.storyEntityId,summary:c.description,mysteryId,visibility:c.visibility}))),...state.reveals.map(r=>({kind:'Reveal',title:r.title,storyId:r.sceneId||r.chapterId||r.partId||r.bookId,summary:r.summary,mysteryId:r.mysteryId})),...foreshadow.map(f=>({kind:'Foreshadowing',title:f.name,storyId:f.fields?.storyEntityId,summary:f.fields?.event,mysteryId:null,visibility:f.fields?.visibility}))].sort((a,b)=>compareStoryRefs(a.storyId,b.storyId,state.entities));
   main.innerHTML=pageHeader('Reveal & Foreshadowing Board','A chronological reread view of clues, red herrings, foreshadowing, and actual reveals.','<button class="button primary" data-add-reveal="">+ Reader reveal</button>')+`<section class="card"><div class="filter-row"><select id="reveal-mystery"><option value="">All mysteries</option>${mysteries.map(m=>`<option value="${esc(m.id)}">${esc(m.name)}</option>`).join('')}</select><select id="reveal-kind"><option value="">All kinds</option>${['Clue','Red herring','Contradiction','Evidence','Foreshadowing','Reveal'].map(x=>`<option>${x}</option>`).join('')}</select></div><div id="reveal-results" class="reveal-board"></div></section>`;
   const update=()=>{ const mysteryId=$('#reveal-mystery').value,kind=$('#reveal-kind').value; const filtered=rows.filter(r=>!mysteryId||r.mysteryId===mysteryId).filter(r=>!kind||r.kind===kind); $('#reveal-results').innerHTML=filtered.length?filtered.map(r=>`<div class="reveal-node"><div class="reveal-kind">${esc(r.kind)}${r.visibility?` • ${esc(r.visibility)}`:''}</div><strong>${esc(r.title)}</strong><div class="muted small">${esc(r.storyId?storyPath(entityById(r.storyId),state.entities):'Unscheduled')}</div>${r.summary?`<div class="small">${esc(r.summary)}</div>`:''}${r.mysteryId?`<div class="small">Mystery: ${esc(entityById(r.mysteryId)?.name||'Missing')}</div>`:''}</div>`).join(''):emptyState('Nothing on this board','Add structured clues, foreshadowing entries, or reveal records.'); };
   $('#reveal-mystery').addEventListener('input',update); $('#reveal-kind').addEventListener('input',update); update();
 }
 
 function renderKnowledge(){
-  const subjects=activeEntities().filter(e=>!['idea','question','trilogy','book','chapter','scene','map'].includes(e.type)).sort((a,b)=>a.name.localeCompare(b.name)); const selectedId=subjects[0]?.id||'';
+  const subjects=activeEntities().filter(e=>!['idea','question','trilogy','book','part','chapter','scene','map'].includes(e.type)).sort((a,b)=>a.name.localeCompare(b.name)); const selectedId=subjects[0]?.id||'';
   main.innerHTML=pageHeader('Character & Reader Knowledge','Track who knows the truth, who has partial information, who believes something wrong, and when that changes.','<button class="button primary" data-add-knowledge="">+ Knowledge record</button>')+`<section class="card"><div class="filter-row"><select id="knowledge-subject"><option value="">All subjects</option>${subjects.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('')}</select><select id="knowledge-state"><option value="">All states</option>${KNOWLEDGE_STATES.map(s=>`<option>${esc(s)}</option>`).join('')}</select></div><div id="knowledge-results"></div></section><section class="card section"><div class="section-title"><h2>Knowledge graph</h2><span class="muted small">Choose one subject above to visualize it.</span></div><div id="knowledge-graph">${selectedId?renderKnowledgeGraph(selectedId):'<div class="muted small">Create a knowledge record first.</div>'}</div></section>`;
   const update=()=>{ const subject=$('#knowledge-subject').value,stateFilter=$('#knowledge-state').value; const rows=state.knowledge.filter(k=>!subject||k.subjectEntityId===subject).filter(k=>!stateFilter||k.state===stateFilter); $('#knowledge-results').innerHTML=rows.length?`<div class="tracking-list">${rows.map(k=>`<div class="tracking-row"><div><div class="list-title">${esc(entityById(k.subjectEntityId)?.name||'Missing subject')} — ${esc(k.knowerKind==='reader'?'Reader':entityById(k.knowerEntityId)?.name||'Missing character')}</div><div class="list-meta">${esc(k.state)}${k.storyEntityId?` • ${esc(storyPath(entityById(k.storyEntityId),state.entities))}`:''}</div><div class="small">${esc(k.belief||'')}</div></div><button class="icon-btn" data-delete-knowledge="${esc(k.id)}">×</button></div>`).join('')}</div>`:emptyState('No knowledge records','Add a record to track a character or reader state.'); $('#knowledge-graph').innerHTML=subject?renderKnowledgeGraph(subject):'<div class="muted small">Choose one subject to visualize its knowledge states.</div>'; };
   $('#knowledge-subject').addEventListener('input',update); $('#knowledge-state').addEventListener('input',update); update();
@@ -419,31 +491,78 @@ function renderKnowledgeGraph(subjectId){
   return `<div class="graph-scroll"><svg class="graph-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Knowledge graph for ${esc(subject?.name||'subject')}">${nodes.map(n=>`<line x1="${cx}" y1="${cy}" x2="${n.x}" y2="${n.y}" class="graph-edge"/><text x="${(cx+n.x)/2}" y="${(cy+n.y)/2}" class="graph-edge-label">${esc(n.k.state)}</text>`).join('')}<g><circle cx="${cx}" cy="${cy}" r="48" class="graph-node-root"/><text x="${cx}" y="${cy}" class="graph-label">${esc((subject?.name||'Subject').slice(0,18))}</text></g>${nodes.map(n=>`<g><circle cx="${n.x}" cy="${n.y}" r="38" class="graph-node"/><text x="${n.x}" y="${n.y}" class="graph-label">${esc(n.label.slice(0,16))}</text></g>`).join('')}</svg></div>`;
 }
 
+function graphPresetTypes(name){
+  const byCategory=cat=>RELATION_TYPES.filter(type=>relationCategory(type)===cat);
+  if(name==='family') return [...FAMILY_RELATION_TYPES];
+  if(name==='personal') return byCategory('personal');
+  if(name==='political') return byCategory('political');
+  if(name==='historical') return byCategory('historical');
+  if(name==='creation') return byCategory('creation');
+  if(name==='story') return byCategory('story');
+  return [];
+}
+function graphFilters(){
+  const types=[...document.querySelectorAll('[data-graph-rel-type]:checked')].map(el=>el.value);
+  const entityTypes=[...document.querySelectorAll('[data-graph-entity-type]:checked')].map(el=>el.value);
+  const statuses=[...document.querySelectorAll('[data-graph-status]:checked')].map(el=>el.value);
+  return {depth:Number($('#graph-depth')?.value||1),types,statuses,entityTypes,eraId:$('#graph-era')?.value||'',activeQuery:$('#graph-active')?.value||''};
+}
 function renderGraphs(){
-  const entities=activeEntities().filter(e=>!['idea','question'].includes(e.type)).sort((a,b)=>a.name.localeCompare(b.name)); const chars=entities.filter(e=>e.type==='character');
-  main.innerHTML=pageHeader('Relationship Graphs','Explore structured links without replacing the underlying entries. Family trees and dynasties derive from canonical blood, adoptive, guardian, sibling, and spouse relationships.','')+`<div class="grid two"><section class="card"><div class="section-title"><h2>Relationship graph</h2></div><label>Center entry<select id="graph-root"><option value="">Choose…</option>${entities.map(e=>`<option value="${esc(e.id)}">${esc(e.name)} — ${esc(typeLabel(e.type))}</option>`).join('')}</select></label><div id="relationship-graph" class="section"></div></section><section class="card"><div class="section-title"><h2>Family tree</h2></div><div class="form-grid"><label>Character<select id="family-root"><option value="">Choose…</option>${chars.map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join('')}</select></label><label>Era / house / tag filter<input id="family-filter" placeholder="optional tag or title"/></label></div><div id="family-graph" class="section"></div></section></div>`;
-  $('#graph-root').addEventListener('input',e=>$('#relationship-graph').innerHTML=e.target.value?renderRelationshipGraph(e.target.value):''); const familyUpdate=()=>{const root=$('#family-root').value;$('#family-graph').innerHTML=root?renderFamilyTree(root,$('#family-filter').value):'';}; $('#family-root').addEventListener('input',familyUpdate); $('#family-filter').addEventListener('input',familyUpdate);
+  const initialRoot=route().selected||'';
+  const entities=activeEntities().filter(e=>!['idea','question'].includes(e.type)).sort((a,b)=>a.name.localeCompare(b.name)); const chars=entities.filter(e=>['character','deity'].includes(e.type));
+  const entityTypes=[...new Set(entities.map(e=>e.type))].sort((a,b)=>typeLabel(a).localeCompare(typeLabel(b)));
+  main.innerHTML=pageHeader('Relationship Graphs','Family genealogy and the general connection network are separate derived views of the same canonical relationship records.','')+`<div class="graph-page-stack"><section class="card graph-card"><div class="section-title"><div><h2>Connection Graph</h2><div class="muted small">Start local, then refocus or increase depth. Nothing here creates duplicate graph data.</div></div></div><div class="graph-controls"><label>Center entry<select id="graph-root"><option value="">Choose…</option>${entities.map(e=>`<option value="${esc(e.id)}" ${e.id===initialRoot?'selected':''}>${esc(e.name)} — ${esc(typeLabel(e.type))}</option>`).join('')}</select></label><label>Depth<select id="graph-depth"><option value="1" selected>1 — direct</option><option value="2">2</option><option value="3">3</option></select></label><label>Era<select id="graph-era"><option value="">All eras</option>${entities.filter(e=>e.type==='era').map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join('')}</select></label><label>Active period contains<input id="graph-active" placeholder="120, Book 2…" /></label></div><div class="graph-presets"><button class="button ghost compact-button" data-graph-preset="all">All connections</button><button class="button ghost compact-button" data-graph-preset="personal">Personal</button><button class="button ghost compact-button" data-graph-preset="family">Family</button><button class="button ghost compact-button" data-graph-preset="political">Political</button><button class="button ghost compact-button" data-graph-preset="historical">Historical</button><button class="button ghost compact-button" data-graph-preset="creation">Creation / Influence</button><button class="button ghost compact-button" data-graph-preset="story">Story</button></div><details class="graph-filter-details"><summary>Entity & relationship filters</summary><div class="graph-filter-grid"><fieldset><legend>Entity type</legend>${entityTypes.map(t=>`<label class="check-row"><input type="checkbox" data-graph-entity-type value="${esc(t)}" checked/> ${esc(typeLabel(t))}</label>`).join('')}</fieldset><fieldset><legend>Relationship type</legend>${RELATION_TYPES.map(t=>`<label class="check-row"><input type="checkbox" data-graph-rel-type value="${esc(t)}" checked/> ${esc(t.replaceAll('_',' '))}</label>`).join('')}</fieldset><fieldset><legend>Relationship status</legend>${RELATION_STATUSES.map(status=>`<label class="check-row"><input type="checkbox" data-graph-status value="${esc(status)}" ${['Canon','Provisional','Unknown'].includes(status)?'checked':''}/> ${esc(status)}</label>`).join('')}</fieldset></div></details><div id="relationship-graph" class="section"></div></section><section class="card graph-card"><div class="section-title"><div><h2>Family Tree</h2><div class="muted small">Genealogy is derived from parent, child, sibling, spouse, adoptive-parent, and guardian relationships. Social/legal relationships stay visually distinct.</div></div></div><div class="graph-controls"><label>Focus person<select id="family-root"><option value="">Choose…</option>${chars.map(e=>`<option value="${esc(e.id)}" ${e.id===initialRoot?'selected':''}>${esc(e.name)} — ${esc(typeLabel(e.type))}</option>`).join('')}</select></label><label>Generations<select id="family-depth"><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option></select></label><label>Filter names / tags<input id="family-filter" placeholder="optional"/></label></div><div id="family-graph" class="section"></div></section></div>`;
+  const updateGraph=()=>{const root=$('#graph-root').value;$('#relationship-graph').innerHTML=root?renderRelationshipGraph(root,graphFilters()):'<div class="muted small">Choose any entity to inspect its local network.</div>'; bindGraphInteractions();};
+  const updateFamily=()=>{const root=$('#family-root').value;$('#family-graph').innerHTML=root?renderFamilyTree(root,$('#family-filter').value,Number($('#family-depth').value||3)):'<div class="muted small">Choose a character or ancient being to inspect their family.</div>'; bindGraphInteractions();};
+  ['#graph-root','#graph-depth','#graph-era','#graph-active'].forEach(sel=>$(sel).addEventListener('input',updateGraph)); document.querySelectorAll('[data-graph-rel-type],[data-graph-entity-type],[data-graph-status]').forEach(el=>el.addEventListener('change',updateGraph));
+  document.querySelectorAll('[data-graph-preset]').forEach(btn=>btn.addEventListener('click',()=>{const wanted=graphPresetTypes(btn.dataset.graphPreset);document.querySelectorAll('[data-graph-rel-type]').forEach(el=>el.checked=!wanted.length||wanted.includes(el.value));updateGraph();}));
+  ['#family-root','#family-depth','#family-filter'].forEach(sel=>$(sel).addEventListener('input',updateFamily));
+  updateGraph(); updateFamily();
 }
-
-function renderRelationshipGraph(rootId){
-  const net=neighborhood(rootId,state.relations,2); const ids=net.ids.filter(x=>entityById(x)); if(!ids.length) return '<div class="muted small">No links.</div>'; const w=800,h=480,pos=radialLayout(rootId,ids,w,h);
-  return `<div class="graph-scroll"><svg class="graph-svg" viewBox="0 0 ${w} ${h}">${net.edges.filter(r=>pos[r.fromId]&&pos[r.toId]).map(r=>`<line x1="${pos[r.fromId].x}" y1="${pos[r.fromId].y}" x2="${pos[r.toId].x}" y2="${pos[r.toId].y}" class="graph-edge"/><text x="${(pos[r.fromId].x+pos[r.toId].x)/2}" y="${(pos[r.fromId].y+pos[r.toId].y)/2}" class="graph-edge-label">${esc(r.type.replaceAll('_',' '))}</text>`).join('')}${ids.map(nodeId=>{const p=pos[nodeId],e=entityById(nodeId);return `<g class="graph-click" tabindex="0" role="button" data-open-entry="${esc(nodeId)}" data-open-route="${esc(sectionForType(e.type))}" aria-label="Open ${esc(e.name)}"><circle cx="${p.x}" cy="${p.y}" r="${nodeId===rootId?46:34}" class="${nodeId===rootId?'graph-node-root':'graph-node'}"/><text x="${p.x}" y="${p.y}" class="graph-label">${esc(e.name.slice(0,nodeId===rootId?20:14))}</text></g>`;}).join('')}</svg></div>`;
+function bindGraphInteractions(){
+  document.querySelectorAll('[data-graph-focus]').forEach(el=>el.addEventListener('click',()=>{const select=$('#graph-root'); if(select){select.value=el.dataset.graphFocus; select.dispatchEvent(new Event('input'));}}));
+  document.querySelectorAll('[data-family-focus]').forEach(el=>el.addEventListener('click',()=>{const select=$('#family-root'); if(select){select.value=el.dataset.familyFocus; select.dispatchEvent(new Event('input'));}}));
 }
-
-function renderFamilyTree(rootId,filter=''){
-  const levels=familyLevels(rootId,state.relations,3); if(levels.size<=1) return '<div class="muted small">No family links found. Add parent, child, adoptive, guardian, sibling, or spouse relationships to build the tree.</div>';
-  const term=String(filter||'').trim().toLowerCase(); const visibleIds=new Set([...levels.keys()].filter(id=>{if(id===rootId||!term)return true;const e=entityById(id);return [e?.name,e?.fields?.titles,e?.fields?.homeland,...(e?.tags||[])].join(' ').toLowerCase().includes(term);})); visibleIds.add(rootId);
-  const groups=[...levels.entries()].filter(([id])=>visibleIds.has(id)).reduce((acc,[id,level])=>{(acc[level]||=[]).push(id);return acc;},{}); const keys=Object.keys(groups).map(Number).sort((a,b)=>a-b); const width=900,rowH=135,height=Math.max(280,keys.length*rowH+70),positions={};
-  keys.forEach((level,row)=>{const ids=groups[level]; ids.forEach((entityId,i)=>{positions[entityId]={x:width*(i+1)/(ids.length+1),y:55+row*rowH};});});
-  const familyTypes=['parent_of','child_of','adoptive_parent_of','guardian_of','sibling_of','spouse_of','former_spouse_of']; const familyRels=state.relations.filter(r=>familyTypes.includes(r.type)&&positions[r.fromId]&&positions[r.toId]);
-  return `<div class="graph-scroll"><svg class="graph-svg" viewBox="0 0 ${width} ${height}">${familyRels.map(r=>`<line x1="${positions[r.fromId].x}" y1="${positions[r.fromId].y}" x2="${positions[r.toId].x}" y2="${positions[r.toId].y}" class="graph-edge family-${esc(r.type)}"/><text x="${(positions[r.fromId].x+positions[r.toId].x)/2}" y="${(positions[r.fromId].y+positions[r.toId].y)/2}" class="graph-edge-label">${esc(r.type.replaceAll('_',' '))}</text>`).join('')}${Object.entries(positions).map(([entityId,p])=>{const e=entityById(entityId),sub=[e?.fields?.titles,e?.fields?.homeland].filter(Boolean).join(' • ');return `<g class="graph-click" tabindex="0" role="button" data-open-entry="${esc(entityId)}" data-open-route="characters" aria-label="Open ${esc(e?.name||'character')}"><rect x="${p.x-82}" y="${p.y-29}" width="164" height="58" rx="12" class="${entityId===rootId?'graph-family-root':'graph-family-node'}"/><text x="${p.x}" y="${p.y-5}" class="graph-label">${esc(e?.name?.slice(0,22)||'Missing')}</text>${sub?`<text x="${p.x}" y="${p.y+13}" class="graph-edge-label">${esc(sub.slice(0,28))}</text>`:''}</g>`;}).join('')}</svg></div>`;
+function edgeTitle(r){const era=r.eraId?entityById(r.eraId)?.name:'';return [relationEdgeLabel(r.type),r.note,era,r.activeFrom||r.activeTo?`${r.activeFrom||'…'} → ${r.activeTo||'…'}`:''].filter(Boolean).join(' • ');}
+function renderRelationshipGraph(rootId,filters){
+  const eligibleIds=new Set(activeEntities().filter(e=>!filters.entityTypes?.length||filters.entityTypes.includes(e.type)).map(e=>e.id)); eligibleIds.add(rootId);
+  const graphRelations=state.relations.filter(r=>eligibleIds.has(r.fromId)&&eligibleIds.has(r.toId)); const net=neighborhood(rootId,graphRelations,filters.depth,{types:filters.types,statuses:filters.statuses,eraId:filters.eraId,activeQuery:filters.activeQuery,entities:state.entities}); const ids=net.ids.filter(x=>entityById(x)&&eligibleIds.has(x)); if(ids.length<=1) return '<div class="muted small">No connections match these filters.</div>';
+  const allowedIds=new Set(ids),edges=net.edges.filter(r=>allowedIds.has(r.fromId)&&allowedIds.has(r.toId)),w=920,h=560,pos=radialLayout(rootId,ids,w,h);
+  return `<div class="graph-summary"><strong>${ids.length}</strong> entities • <strong>${edges.length}</strong> relationships <span class="muted small">Click a node to make it the new focus. Open entries from the list below.</span></div><div class="graph-scroll"><svg class="graph-svg" viewBox="0 0 ${w} ${h}"><defs><marker id="graph-arrow" markerWidth="8" markerHeight="8" refX="7" refY="3.5" orient="auto"><polygon points="0 0, 7 3.5, 0 7" class="graph-arrow"/></marker></defs>${edges.map(r=>`<g><line x1="${pos[r.fromId].x}" y1="${pos[r.fromId].y}" x2="${pos[r.toId].x}" y2="${pos[r.toId].y}" class="graph-edge" ${isDirectionalRelation(r.type)?'marker-end="url(#graph-arrow)"':''}><title>${esc(edgeTitle(r))}</title></line><text x="${(pos[r.fromId].x+pos[r.toId].x)/2}" y="${(pos[r.fromId].y+pos[r.toId].y)/2}" class="graph-edge-label">${esc(relationEdgeLabel(r.type))}</text></g>`).join('')}${ids.map(nodeId=>{const p=pos[nodeId],e=entityById(nodeId);return `<g class="graph-click" tabindex="0" role="button" data-graph-focus="${esc(nodeId)}" aria-label="Focus graph on ${esc(e.name)}"><circle cx="${p.x}" cy="${p.y}" r="${nodeId===rootId?48:35}" class="${nodeId===rootId?'graph-node-root':'graph-node'}"/><text x="${p.x}" y="${p.y-3}" class="graph-label">${esc(e.name.slice(0,nodeId===rootId?22:16))}</text><text x="${p.x}" y="${p.y+14}" class="graph-node-type">${esc(typeLabel(e.type).slice(0,20))}</text></g>`;}).join('')}</svg></div><div class="graph-node-list">${ids.map(nodeId=>{const e=entityById(nodeId);return `<div class="graph-node-list-row"><button class="inline-link" data-open-entry="${esc(e.id)}" data-open-route="${esc(sectionForType(e.type))}">${esc(e.name)}</button><span class="muted small">${esc(typeLabel(e.type))}</span><button class="button ghost compact-button" data-graph-focus="${esc(e.id)}">Focus</button></div>`;}).join('')}</div>`;
+}
+function familyEdgeClass(type){return type==='adoptive_parent_of'?'family-adoptive':type==='guardian_of'?'family-guardian':type==='former_spouse_of'?'family-former-spouse':type==='spouse_of'?'family-spouse':type==='sibling_of'?'family-sibling':'family-biological';}
+function renderFamilyTree(rootId,filter='',maxDepth=3){
+  const net=familyNetwork(rootId,state.relations,maxDepth,state.entities); if(net.ids.length<=1) return '<div class="muted small">No family links found. Add parent, child, adoptive-parent, guardian, sibling, or spouse relationships to build the tree.</div>';
+  const term=String(filter||'').trim().toLowerCase(); const visibleIds=new Set(net.ids.filter(id=>{if(id===rootId||!term)return true;const e=entityById(id);return [e?.name,e?.fields?.titles,e?.fields?.homeland,...(e?.tags||[])].join(' ').toLowerCase().includes(term);})); visibleIds.add(rootId);
+  const groups=[...net.levels.entries()].filter(([id])=>visibleIds.has(id)&&entityById(id)).reduce((acc,[id,level])=>{(acc[level]||=[]).push(id);return acc;},{}); const keys=Object.keys(groups).map(Number).sort((a,b)=>a-b); const width=1000,rowH=145,height=Math.max(300,keys.length*rowH+80),positions={};
+  keys.forEach((level,row)=>{const rowIds=groups[level]; rowIds.forEach((entityId,i)=>{positions[entityId]={x:width*(i+1)/(rowIds.length+1),y:65+row*rowH};});});
+  const familyRels=net.edges.filter(r=>positions[r.fromId]&&positions[r.toId]);
+  return `<div class="family-legend"><span><i class="legend-line family-biological"></i> genealogical</span><span><i class="legend-line family-adoptive"></i> adoptive</span><span><i class="legend-line family-guardian"></i> guardian</span><span><i class="legend-line family-spouse"></i> spouse</span><span><i class="legend-line family-former-spouse"></i> former spouse</span></div><div class="graph-scroll"><svg class="graph-svg family-svg" viewBox="0 0 ${width} ${height}">${familyRels.map(r=>`<line x1="${positions[r.fromId].x}" y1="${positions[r.fromId].y}" x2="${positions[r.toId].x}" y2="${positions[r.toId].y}" class="graph-edge ${familyEdgeClass(r.type)}"><title>${esc(edgeTitle(r))}</title></line>`).join('')}${Object.entries(positions).map(([entityId,p])=>{const e=entityById(entityId),sub=[e?.fields?.titles,e?.fields?.homeland].filter(Boolean).join(' • ');return `<g class="graph-click" tabindex="0" role="button" data-family-focus="${esc(entityId)}" aria-label="Focus family tree on ${esc(e?.name||'character')}"><rect x="${p.x-92}" y="${p.y-31}" width="184" height="62" rx="12" class="${entityId===rootId?'graph-family-root':'graph-family-node'}"/><text x="${p.x}" y="${p.y-6}" class="graph-label">${esc(e?.name?.slice(0,24)||'Missing')}</text>${sub?`<text x="${p.x}" y="${p.y+13}" class="graph-edge-label">${esc(sub.slice(0,30))}</text>`:''}</g>`;}).join('')}</svg></div><div class="graph-summary"><span class="muted small">Click a person to refocus the tree. Missing relatives are left missing rather than invented.</span> <button class="button ghost compact-button" data-open-entry="${esc(rootId)}" data-open-route="${esc(sectionForType(entityById(rootId)?.type))}">Open focus entry</button></div>`;
 }
 
 function renderArchive(){
   const archived=state.entities.filter(e=>e.archivedAt).sort((a,b)=>new Date(b.archivedAt)-new Date(a.archivedAt));
   const selected=route().selected?entityById(route().selected):null; state.selectedId=selected?.archivedAt?selected.id:null;
-  main.innerHTML=pageHeader('Archive','Archived lore is retained for history, backups, and possible reuse. Permanent deletion is available only after archiving.','')+`<section class="card"><div class="list">${archived.length?archived.map(e=>entryListItem(e,'archive')).join(''):emptyState('Archive is empty','Archiving removes entries from normal working views without destroying them.')}</div></section>`;
-  if(selected?.archivedAt){ main.innerHTML+=`<section class="card section collection-detail" id="detail-panel" data-entry-detail="${esc(selected.id)}">${renderEntryDetail(selected,'archive')}</section>`; v3().loadEntryRevisions(selected.id); }
+  main.innerHTML=pageHeader('Archive','Archived lore is retained for history, backups, and possible reuse. Permanent deletion is available only after archiving.','')+`<section class="card"><div class="section-title"><div><h2>Archived entries</h2><div class="muted small">Newest archived entries first.</div></div><strong class="collection-result-count">${archived.length} ${archived.length===1?'entry':'entries'}</strong></div>${archived.length?`<div class="collection-card-grid archive-card-grid">${archived.map(e=>collectionCard(e,'archive')).join('')}</div>`:emptyState('Archive is empty','Archiving removes entries from normal working views without destroying them.')}</section>`;
+  if(selected?.archivedAt){ main.innerHTML+=`<section class="card section collection-detail" id="detail-panel" data-entry-detail="${esc(selected.id)}">${renderEntryDetail(selected,'archive')}</section>`; v3().loadEntryRevisions(selected.id); v3().loadEntryImpact(selected.id); }
+}
+
+
+function diagnosticsSummaryHtml(){
+  const d=state.diagnostics;
+  if(!d) return '<div class="muted small">Run a health check to verify D1 integrity, narrative anchors, and the derived reference index. Deep verification also reconstructs the expected reverse index in memory and compares every edge.</div>';
+  const integrity=(d.sqlite?.integrity||[]).join(', ')||'unknown',ref=d.referenceIndex||{},narr=d.narrative||{};
+  const refState=ref.inSync===false?'Needs rebuild':(ref.inSync===true?'In sync':(Number(ref.orphanTargets||0)?'Has orphaned targets':'Shallow check passed'));
+  return `<div class="grid stats"><div><div class="muted small">SQLite</div><strong>${esc(integrity)}</strong></div><div><div class="muted small">Reference index</div><strong>${esc(refState)}</strong></div><div><div class="muted small">Broken story positions</div><strong>${Number(narr.brokenPositions||0)}</strong></div><div><div class="muted small">Index rows</div><strong>${Number(ref.rows||0)}</strong></div></div>${ref.expectedRows!==undefined?`<div class="muted small section">Expected ${Number(ref.expectedRows)} edges • missing ${Number(ref.missing||0)} • stale ${Number(ref.stale||0)} • deep check ${Number(d.timings?.deepMs||0)} ms${d.snapshotBytes?` • diagnostic snapshot ${Math.round(Number(d.snapshotBytes)/1024)} KB`:''}</div>`:''}<div class="muted small section">Generated ${esc(fmtDate(d.generatedAt))} • shallow check ${Number(d.timings?.shallowMs||0)} ms</div>`;
+}
+async function runArchitectureDiagnostics(deep=false){
+  try{ toast(deep?'Running deep architecture verification…':'Running architecture health check…'); state.diagnostics=await getDiagnostics({deep}); if(route().name==='settings') renderSettings(); toast(deep?'Deep verification complete.':'Health check complete.'); }
+  catch(error){ console.error(error); toast(error.message||'Diagnostics failed.'); }
+}
+async function rebuildDerivedReferenceIndex(){
+  if(!confirm('Rebuild the derived reference index from canonical records? Canonical lore will not be changed.')) return;
+  try{ toast('Rebuilding derived reference index…'); state.diagnostics=await rebuildReferenceIndexRemote(); if(route().name==='settings') renderSettings(); toast('Reference index rebuilt and verified.'); }
+  catch(error){ console.error(error); toast(error.message||'Reference-index rebuild failed.'); }
 }
 
 function renderSettings(){
@@ -452,7 +571,8 @@ function renderSettings(){
     <div class="grid two"><section class="card"><h2>Project</h2><form id="project-settings" class="form-grid" style="margin-top:12px"><label class="full">Project name<input id="setting-project-name" value="${esc(project.name||'')}" /></label><label class="full">Current book<select id="setting-current-book"><option value="">None selected</option>${books.map(b=>`<option value="${esc(b.id)}" ${project.currentBookId===b.id?'selected':''}>${esc(b.name)}</option>`).join('')}</select></label><div class="full"><button class="button primary" type="submit">Save settings</button></div></form></section><section class="card"><h2>Cloud storage</h2><p class="prose">Saved canon is stored remotely in the private Cloudflare D1 database. Maps and uploaded images are stored in the private R2 bucket. Cloudflare Access remains the login gate for the site.</p><p class="muted small">This browser only keeps temporary unsaved editor drafts. Clearing browser data can remove those drafts, but it does not erase lore already saved to D1/R2.</p><div class="section"><span class="badge ${state.storageStatus?.ready?'canon':'unknown'}">${state.storageStatus?.ready?'Connected':'Status unavailable'}</span>${state.storageStatus?.accessEmail?` <span class="muted small">${esc(state.storageStatus.accessEmail)}</span>`:''}</div></section></div>
     <section class="card section"><div class="section-title"><div><h2>Backup & restore</h2><div class="muted small">JSON is fully portable. ZIP keeps media as separate files and is better for large projects.</div></div></div><div class="actions"><button class="button" id="export-backup">Export JSON</button><button class="button primary" id="export-zip">Export ZIP backup</button><button class="button" id="import-backup">Restore JSON / ZIP</button><button class="button" id="export-markdown">Export Markdown</button></div><p class="muted small">Restore remains replace-only to avoid ambiguous merges. Export a safety backup before restoring another file.</p></section>
     ${state.legacyAvailable?`<section class="card section"><div class="section-title"><div><h2>V1 browser migration</h2><div class="muted small">A legacy V1 IndexedDB database was found on this hostname.</div></div></div><p class="prose">Import the old browser database directly into D1/R2. The legacy database is read-only during migration and is not deleted afterward.</p><button class="button primary" id="import-legacy-db">Import V1 browser database</button></section>`:''}
-    <section class="card section"><h2>Database summary</h2><div class="grid stats" style="margin-top:12px"><div><div class="muted small">Entries</div><strong>${state.entities.length}</strong></div><div><div class="muted small">Relationships</div><strong>${state.relations.length}</strong></div><div><div class="muted small">Media</div><strong>${state.media.length}</strong></div><div><div class="muted small">App version</div><strong>${APP_VERSION}</strong></div></div><div class="grid stats section"><div><div class="muted small">Clues</div><strong>${state.clues.length}</strong></div><div><div class="muted small">Reveals</div><strong>${state.reveals.length}</strong></div><div><div class="muted small">Knowledge records</div><strong>${state.knowledge.length}</strong></div><div><div class="muted small">Map markers</div><strong>${state.mapMarkers.length}</strong></div></div></section>`;
+    <section class="card section"><h2>Database summary</h2><div class="grid stats" style="margin-top:12px"><div><div class="muted small">Entries</div><strong>${state.entities.length}</strong></div><div><div class="muted small">Relationships</div><strong>${state.relations.length}</strong></div><div><div class="muted small">Media</div><strong>${state.media.length}</strong></div><div><div class="muted small">App version</div><strong>${APP_VERSION}</strong></div></div><div class="grid stats section"><div><div class="muted small">Clues</div><strong>${state.clues.length}</strong></div><div><div class="muted small">Reveals</div><strong>${state.reveals.length}</strong></div><div><div class="muted small">Knowledge records</div><strong>${state.knowledge.length}</strong></div><div><div class="muted small">Map markers</div><strong>${state.mapMarkers.length}</strong></div></div></section>
+    <section class="card section"><div class="section-title"><div><h2>Architecture diagnostics</h2><div class="muted small">Derived data is rebuildable. These checks never replace canonical lore.</div></div></div><div id="diagnostics-output">${diagnosticsSummaryHtml()}</div><div class="actions section"><button class="button" id="run-diagnostics">Health check</button><button class="button" id="run-deep-diagnostics">Deep verify</button><button class="button ghost" id="rebuild-reference-index">Rebuild reference index</button></div></section>`;
 }
 
 
@@ -466,7 +586,7 @@ function applyRoleUi(){
   document.body.dataset.role=reviewer?'reviewer':'owner';
   if(reviewer){
     $('#quick-add')?.classList.add('hidden');
-    main.querySelectorAll('[data-new-entry],[data-edit-entry],[data-command],[data-workspace-result],[data-add-plot-beat],[data-delete-workspace],[data-toggle-workspace],[data-open-saved-view],[data-add-whiteboard-node],[data-convert-note],[data-generate-name],[data-toggle-focus],[data-export-manuscript],[data-suggest-link-from],[data-restore-revision],[data-toggle-favorite],[data-add-relation],[data-delete-relation],[data-add-media],[data-add-portrait],[data-set-portrait],[data-clear-portrait],[data-upload-media],[data-view-media],[data-media-card-size],[data-delete-media],[data-convert-idea],[data-unarchive-entry],[data-add-clue],[data-delete-clue],[data-add-reveal],[data-delete-reveal],[data-add-knowledge],[data-add-knowledge-for],[data-delete-knowledge],[data-add-map-version],[data-delete-map-version],[data-delete-marker],[data-new-map-for],form button[type="submit"],#import-backup,#import-legacy-db').forEach(el=>el.classList.add('hidden'));
+    main.querySelectorAll('[data-new-entry],[data-edit-entry],[data-inline-edit-field],[data-command],[data-workspace-result],[data-add-plot-beat],[data-delete-workspace],[data-toggle-workspace],[data-open-saved-view],[data-add-whiteboard-node],[data-convert-note],[data-generate-name],[data-toggle-focus],[data-export-manuscript],[data-suggest-link-from],[data-restore-revision],[data-toggle-favorite],[data-add-relation],[data-edit-relation],[data-delete-relation],[data-add-media],[data-add-portrait],[data-set-portrait],[data-clear-portrait],[data-upload-media],[data-view-media],[data-media-card-size],[data-delete-media],[data-convert-idea],[data-unarchive-entry],[data-add-clue],[data-delete-clue],[data-add-reveal],[data-delete-reveal],[data-add-knowledge],[data-add-knowledge-for],[data-delete-knowledge],[data-add-map-version],[data-delete-map-version],[data-delete-marker],[data-new-map-for],form button[type="submit"],#import-backup,#import-legacy-db,#rebuild-reference-index').forEach(el=>el.classList.add('hidden'));
   }
 }
 
@@ -495,30 +615,75 @@ function renderEditorForm(entity){
   $('#archive-entry').classList.toggle('hidden',!exists||Boolean(entity.archivedAt)); $('#delete-entry').classList.toggle('hidden',!exists||!entity.archivedAt); $('#delete-entry').textContent='Delete permanently';
   $('#entry-form-body').innerHTML=`<div class="form-grid"><label>Entry type<select id="entry-type" name="type" ${exists?'disabled aria-disabled="true"':''}>${Object.entries(ENTRY_TYPES).map(([key,val])=>`<option value="${esc(key)}" ${entity.type===key?'selected':''}>${esc(val.label)}</option>`).join('')}</select>${exists?'<span class="muted small field-help">Type is locked after creation so hidden fields and relationships cannot become stale.</span>':''}</label><label>Status<select id="entry-status" name="status">${statuses.map(s=>`<option value="${esc(s)}" ${entity.status===s?'selected':''}>${esc(s)}</option>`).join('')}</select></label><label class="full">Name<input id="entry-name" name="name" value="${esc(entity.name)}" required /></label><label class="full">Summary<textarea id="entry-summary" name="summary" rows="3">${esc(entity.summary||'')}</textarea></label><label class="full">Tags <span class="muted small">comma separated</span><input id="entry-tags" name="tags" value="${esc((entity.tags||[]).join(', '))}" placeholder="ancient, book-one, unresolved" /></label><label>Favorite<select id="entry-favorite" name="favorite"><option value="false" ${!entity.favorite?'selected':''}>No</option><option value="true" ${entity.favorite?'selected':''}>Yes</option></select></label></div>${ordinary.length?`<div class="form-section"><h3>${esc(def.label)} details</h3><div class="form-grid">${ordinary.map(f=>`<label class="${f.type==='textarea'?'full':''}">${esc(f.label)}${fieldInput(f,entity.fields?.[f.key]??'',entity.id)}</label>`).join('')}</div></div>`:''}${knowledge.length?`<div class="form-section"><h3>Knowledge layers</h3><div class="form-grid">${knowledge.map(f=>`<label class="full">${esc(f.label)}${fieldInput(f,entity.fields?.[f.key]??'',entity.id)}</label>`).join('')}</div></div>`:''}<div class="form-section"><h3>Author notes</h3><label>Notes<textarea id="entry-notes" name="notes" rows="6">${esc(entity.notes||'')}</textarea></label></div>`;
   if(!exists) $('#entry-type').addEventListener('change',event=>{ const draft=readEditorEntity(); draft.type=event.target.value; draft.fields={}; if(!validStatusesFor(draft.type).includes(draft.status)) draft.status=validStatusesFor(draft.type)[0]; state.editorEntity=draft; renderEditorForm(draft); });
+  if(entity.type==='chapter') $('#field-parentPartId')?.addEventListener('change',event=>{
+    const part=entityById(event.target.value);
+    if(part?.type==='part'&&part.fields?.parentBookId&&$('#field-parentBookId')) $('#field-parentBookId').value=part.fields.parentBookId;
+  });
   $('#entry-form-body').addEventListener('input',scheduleDraftSave);
 }
 
 function readEditorEntity(){
-  const base=structuredClone(state.editorEntity||createEmptyEntity('lore')); base.type=$('#entry-type')?.value||base.type; base.name=$('#entry-name')?.value.trim()||''; base.status=$('#entry-status')?.value||base.status; base.summary=$('#entry-summary')?.value.trim()||''; base.tags=($('#entry-tags')?.value||'').split(',').map(t=>t.trim().replace(/^#/,'')).filter(Boolean); base.favorite=$('#entry-favorite')?.value==='true'; base.notes=$('#entry-notes')?.value.trim()||''; base.fields=base.fields||{}; document.querySelectorAll('#entry-form-body [name^="field:"]').forEach(input=>base.fields[input.name.slice(6)]=input.value.trim()); base.updatedAt=now(); return base;
+  const base=structuredClone(state.editorEntity||createEmptyEntity('lore'));
+  base.type=$('#entry-type')?.value||base.type;
+  base.name=$('#entry-name')?.value.trim()||'';
+  base.status=$('#entry-status')?.value||base.status;
+  base.summary=$('#entry-summary')?.value.trim()||'';
+  base.tags=($('#entry-tags')?.value||'').split(',').map(t=>t.trim().replace(/^#/,'')).filter(Boolean);
+  base.favorite=$('#entry-favorite')?.value==='true';
+  base.notes=$('#entry-notes')?.value.trim()||'';
+  base.fields=base.fields||{};
+  document.querySelectorAll('#entry-form-body [name^="field:"]').forEach(input=>base.fields[input.name.slice(6)]=input.value.trim());
+  // Part is the canonical hierarchy edge. Keep the denormalized Book reference in sync
+  // so authors never have to maintain the same narrative fact in two controls.
+  if(base.type==='chapter'&&base.fields.parentPartId){
+    const part=entityById(base.fields.parentPartId);
+    if(part?.type==='part'&&part.fields?.parentBookId) base.fields.parentBookId=part.fields.parentBookId;
+  }
+  base.updatedAt=now();
+  return base;
 }
+
 async function openEntryEditor(type='lore',entityId=null,prefill=null){ const existing=entityId?entityById(entityId):null; let base=structuredClone(existing||prefill||createEmptyEntity(type)); state.editorBaseUpdatedAt=existing?.updatedAt||null; try{ const draft=await getDraft(base.id); if(draft&&(!existing||draft.baseUpdatedAt===existing.updatedAt)){ base=structuredClone(draft.entity); toast('Recovered unsaved local draft.'); } }catch{} state.editorEntity=base; renderEditorForm(state.editorEntity); entryDialog.showModal(); setTimeout(()=>$('#entry-name')?.focus(),0); }
 
 async function syncParentRelationship(entity){
-  const mapping={location:['parentLocationId','located_in'],chapter:['parentBookId','belongs_to'],scene:['parentChapterId','belongs_to']}; const cfg=mapping[entity.type]; if(!cfg) return; const [field,type]=cfg; const parentId=entity.fields?.[field]; const generated=state.relations.filter(r=>r.generatedParent&&r.fromId===entity.id&&r.type===type); for(const rel of generated){ if(rel.toId!==parentId) await deleteOne('relations',rel.id); }
-  if(parentId&&!state.relations.some(r=>r.fromId===entity.id&&r.toId===parentId&&r.type===type)) await putOne('relations',{id:id(),fromId:entity.id,toId:parentId,type,note:'Structured parent',generatedParent:true,createdAt:now()});
+  let parentId=null,type=null;
+  if(entity.type==='location'){ parentId=entity.fields?.parentLocationId; type='located_in'; }
+  if(entity.type==='part'){ parentId=entity.fields?.parentBookId; type='belongs_to'; }
+  if(entity.type==='chapter'){ parentId=entity.fields?.parentPartId||entity.fields?.parentBookId; type='belongs_to'; }
+  if(entity.type==='scene'){ parentId=entity.fields?.parentChapterId; type='belongs_to'; }
+  if(!type) return;
+  const generated=state.relations.filter(r=>r.generatedParent&&r.fromId===entity.id&&r.type===type); for(const rel of generated){ if(rel.toId!==parentId) await deleteOne('relations',rel.id); }
+  if(parentId&&!state.relations.some(r=>r.fromId===entity.id&&r.toId===parentId&&r.type===type)) await putOne('relations',{id:id(),fromId:entity.id,toId:parentId,type,status:'Canon',note:'Structured parent',generatedParent:true,createdAt:now(),updatedAt:now()});
 }
 
 async function saveEntity(event){
   event.preventDefault(); const entity=readEditorEntity(); const errors=validateEntity(entity); if(errors.length) return toast(errors[0]); const existed=Boolean(entityById(entity.id));
   try{ await putOne('entities',entity,existed?{baseUpdatedAt:state.editorBaseUpdatedAt}:{}); await syncParentRelationship(entity); }
   catch(error){ if(error.status===409){ toast('This entry changed elsewhere. Reload before overwriting. Your editor remains open.'); return; } toast(error.message||'Could not save entry.'); return; }
-  if(state.conversionSourceId){ const source=entityById(state.conversionSourceId); if(source){ await putOne('entities',{...source,status:'Converted',updatedAt:now()},{baseUpdatedAt:source.updatedAt}); await putOne('relations',{id:id(),fromId:source.id,toId:entity.id,type:'converted_to',note:'Converted from Idea Inbox',createdAt:now()}); } state.conversionSourceId=null; }
+  if(state.conversionSourceId){ const source=entityById(state.conversionSourceId); if(source){ await putOne('entities',{...source,status:'Converted',updatedAt:now()},{baseUpdatedAt:source.updatedAt}); await putOne('relations',{id:id(),fromId:source.id,toId:entity.id,type:'converted_to',status:'Canon',note:'Converted from Idea Inbox',createdAt:now()}); } state.conversionSourceId=null; }
   clearTimeout(draftTimer); await deleteDraft(entity.id).catch(()=>{}); await refreshDrafts(); entryDialog.close(); state.editorBaseUpdatedAt=null; await refreshState(); toast('Entry saved to cloud.'); const r=route(); const collection=COLLECTIONS[r.name]; const destination=collection&&(!collection.types||collection.types.includes(entity.type))?r.name:sectionForType(entity.type); setRoute(destination,entity.id); renderRoute();
 }
 
-function sectionForType(type){ if(['character','deity'].includes(type)) return 'characters'; if(type==='location') return 'geography'; if(type==='map') return 'maps'; if(['event','era'].includes(type)) return 'history'; if(['book','chapter','scene','trilogy'].includes(type)) return 'story'; if(['mystery','foreshadowing'].includes(type)) return 'mysteries'; if(type==='idea') return 'ideas'; if(type==='question') return 'questions'; return 'world'; }
-function openRelationEditor(fromId){ $('#relation-from').value=fromId; $('#relation-type').innerHTML=RELATION_TYPES.map(r=>`<option value="${esc(r)}">${esc(r.replaceAll('_',' '))}</option>`).join(''); $('#relation-to').innerHTML=entityOptions(null,'',fromId); $('#relation-era').innerHTML='<option value="">Any / current</option>'+entityOptions(['era'],'',''); $('#relation-active-from').value=''; $('#relation-active-to').value=''; $('#relation-note').value=''; relationDialog.showModal(); }
-async function saveRelation(event){ event.preventDefault(); const relation={id:id(),fromId:$('#relation-from').value,toId:$('#relation-to').value,type:$('#relation-type').value,note:$('#relation-note').value.trim(),eraId:$('#relation-era').value||null,activeFrom:$('#relation-active-from').value.trim(),activeTo:$('#relation-active-to').value.trim(),createdAt:now(),updatedAt:now()}; const errors=validateRelation(relation); if(errors.length) return toast(errors[0]); await putOne('relations',relation); relationDialog.close(); await refreshState(); renderRoute(); toast('Link added.'); }
+function sectionForType(type){ if(['character','deity'].includes(type)) return 'characters'; if(type==='location') return 'geography'; if(type==='map') return 'maps'; if(['event','era'].includes(type)) return 'history'; if(['book','part','chapter','scene','trilogy'].includes(type)) return 'story'; if(['mystery','foreshadowing'].includes(type)) return 'mysteries'; if(type==='idea') return 'ideas'; if(type==='question') return 'questions'; return 'world'; }
+function openRelationEditor(fromId,relationId=null){
+  const existing=relationId?state.relations.find(r=>r.id===relationId):null; state.editingRelationId=existing?.id||null;
+  const from=existing?.fromId||fromId||'',to=existing?.toId||'';
+  $('#relation-dialog-title').textContent=existing?'Edit relationship':'Add relationship'; $('#relation-submit').textContent=existing?'Save relationship':'Add relationship';
+  $('#relation-from').innerHTML=entityOptions(null,from,''); $('#relation-from').value=from;
+  $('#relation-type').innerHTML=RELATION_TYPES.map(r=>`<option value="${esc(r)}" ${(existing?.type||'related_to')===r?'selected':''}>${esc(r.replaceAll('_',' '))}</option>`).join('');
+  $('#relation-status').innerHTML=RELATION_STATUSES.map(status=>`<option value="${esc(status)}" ${(existing?.status||'Canon')===status?'selected':''}>${esc(status)}</option>`).join('');
+  $('#relation-to').innerHTML=entityOptions(null,to,from); $('#relation-to').value=to;
+  $('#relation-era').innerHTML='<option value="">Any / current</option>'+entityOptions(['era'],existing?.eraId||'',''); $('#relation-era').value=existing?.eraId||'';
+  $('#relation-active-from').value=existing?.activeFrom||''; $('#relation-active-to').value=existing?.activeTo||''; $('#relation-note').value=existing?.note||''; $('#relation-warnings').innerHTML=''; relationDialog.showModal();
+}
+function refreshRelationTargetOptions(){const from=$('#relation-from').value,current=$('#relation-to').value;$('#relation-to').innerHTML=entityOptions(null,current,from);if(current!==from)$('#relation-to').value=current;}
+async function saveRelation(event){
+  event.preventDefault(); const existing=state.editingRelationId?state.relations.find(r=>r.id===state.editingRelationId):null;
+  const relation={id:existing?.id||id(),fromId:$('#relation-from').value,toId:$('#relation-to').value,type:$('#relation-type').value,status:$('#relation-status').value||'Canon',note:$('#relation-note').value.trim(),eraId:$('#relation-era').value||null,activeFrom:$('#relation-active-from').value.trim(),activeTo:$('#relation-active-to').value.trim(),createdAt:existing?.createdAt||now(),updatedAt:now()};
+  const errors=validateRelation(relation); if(errors.length) return toast(errors[0]); const warnings=relationshipWarnings(relation,state.relations); $('#relation-warnings').innerHTML=warnings.map(w=>`<div class="relation-warning">${esc(w.message)}</div>`).join('');
+  if(warnings.length&&!confirm(`${warnings.map(w=>w.message).join('\n\n')}\n\nSave this relationship anyway?`)) return;
+  await putOne('relations',relation); state.editingRelationId=null; relationDialog.close(); await refreshState(); renderRoute(); toast(existing?'Relationship updated.':'Relationship added.');
+}
 function openMediaEditor(preselectEntityId='',defaultTag='',portraitEntityId=null){
   $('#media-form').reset(); state.pendingPortraitEntityId=portraitEntityId;
   $('#media-dialog-title').textContent=portraitEntityId?'Add portrait':'Add media';
@@ -553,11 +718,37 @@ async function unarchiveEntry(entityId){ const entity=entityById(entityId); if(!
 async function deleteEntityConfirmed(){ const entity=state.editorEntity; if(!entity?.archivedAt) return toast('Archive an entry before permanently deleting it.'); if(!confirm(`Permanently delete archived entry “${entity.name}”? This also removes its structured links and subrecords.`)) return; try{ await deleteEntityCascade(entity.id); await deleteDraft(entity.id).catch(()=>{}); await refreshDrafts(); entryDialog.close(); await refreshState(); setRoute('archive'); renderRoute(); toast('Entry permanently deleted.'); }catch(error){ toast(error.message||'Could not delete entry.'); } }
 function convertIdea(entityId){ const source=entityById(entityId); if(!source) return; const target=createEmptyEntity('lore'); target.name=source.name; target.summary=source.summary||source.fields?.idea||''; target.fields.description=source.fields?.idea||source.summary||''; target.tags=[...(source.tags||[])]; state.conversionSourceId=source.id; openEntryEditor('lore',null,target); }
 
-function openClueEditor(mysteryId){ $('#clue-form').reset(); $('#clue-mystery').value=mysteryId; $('#clue-story').innerHTML='<option value="">Unscheduled</option>'+entityOptions(['chapter','scene'],'',''); $('#clue-related-mysteries').innerHTML=activeEntities().filter(e=>e.type==='mystery'&&e.id!==mysteryId).sort((a,b)=>a.name.localeCompare(b.name)).map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join(''); clueDialog.showModal(); }
+function openClueEditor(mysteryId){ $('#clue-form').reset(); $('#clue-mystery').value=mysteryId; $('#clue-story').innerHTML='<option value="">Unscheduled</option>'+entityOptions(['part','chapter','scene'],'',''); $('#clue-related-mysteries').innerHTML=activeEntities().filter(e=>e.type==='mystery'&&e.id!==mysteryId).sort((a,b)=>a.name.localeCompare(b.name)).map(e=>`<option value="${esc(e.id)}">${esc(e.name)}</option>`).join(''); clueDialog.showModal(); }
 async function saveClue(event){ event.preventDefault(); await putOne('clues',{id:id(),mysteryId:$('#clue-mystery').value,mysteryIds:[...$('#clue-related-mysteries').selectedOptions].map(o=>o.value),label:$('#clue-label').value.trim()||'Clue',kind:$('#clue-kind').value,description:$('#clue-description').value.trim(),storyEntityId:$('#clue-story').value||null,visibility:$('#clue-visibility').value,firstRead:$('#clue-first-read').value.trim(),trueInterpretation:$('#clue-true').value.trim(),order:$('#clue-order').value.trim(),createdAt:now(),updatedAt:now()}); clueDialog.close(); await refreshState(); renderRoute(); toast('Clue saved.'); }
-function openRevealEditor(mysteryId=''){ $('#reveal-form').reset(); $('#reveal-mystery').innerHTML='<option value="">None</option>'+entityOptions(['mystery'],mysteryId,''); $('#reveal-target').innerHTML='<option value="">None</option>'+entityOptions(null,'',''); $('#reveal-book').innerHTML='<option value="">None</option>'+entityOptions(['book'],'',''); $('#reveal-chapter').innerHTML='<option value="">None</option>'+entityOptions(['chapter'],'',''); $('#reveal-scene').innerHTML='<option value="">None</option>'+entityOptions(['scene'],'',''); revealDialog.showModal(); }
-async function saveReveal(event){ event.preventDefault(); await putOne('reveals',{id:id(),title:$('#reveal-title').value.trim(),summary:$('#reveal-summary').value.trim(),readerKnowledge:$('#reveal-reader').value.trim(),mysteryId:$('#reveal-mystery').value||null,targetEntityId:$('#reveal-target').value||null,bookId:$('#reveal-book').value||null,chapterId:$('#reveal-chapter').value||null,sceneId:$('#reveal-scene').value||null,createdAt:now(),updatedAt:now()}); revealDialog.close(); await refreshState(); renderRoute(); toast('Reveal saved.'); }
-function openKnowledgeEditor(preselectedCharacter=''){ $('#knowledge-form').reset(); $('#knowledge-subject-select').innerHTML=entityOptions(null,'',''); $('#knowledge-knower').innerHTML='<option value="">Choose character…</option>'+entityOptions(['character'],preselectedCharacter,''); $('#knowledge-story').innerHTML='<option value="">No story point</option>'+entityOptions(['book','chapter','scene'],'',''); $('#knowledge-state-select').innerHTML=KNOWLEDGE_STATES.map(s=>`<option>${esc(s)}</option>`).join(''); if(preselectedCharacter){ $('#knowledge-kind').value='character'; $('#knowledge-knower-wrap').classList.remove('hidden'); } knowledgeDialog.showModal(); }
+function openRevealEditor(mysteryId=''){
+  $('#reveal-form').reset();
+  $('#reveal-mystery').innerHTML='<option value="">None</option>'+entityOptions(['mystery'],mysteryId,'');
+  $('#reveal-target').innerHTML='<option value="">None</option>'+entityOptions(null,'','');
+  $('#reveal-book').innerHTML='<option value="">None</option>'+entityOptions(['book'],'','');
+  $('#reveal-part').innerHTML='<option value="">None</option>'+entityOptions(['part'],'','');
+  $('#reveal-chapter').innerHTML='<option value="">None</option>'+entityOptions(['chapter'],'','');
+  $('#reveal-scene').innerHTML='<option value="">None</option>'+entityOptions(['scene'],'','');
+  const syncFromPart=()=>{ const part=entityById($('#reveal-part').value); if(part?.fields?.parentBookId) $('#reveal-book').value=part.fields.parentBookId; };
+  const syncFromChapter=()=>{ const chapter=entityById($('#reveal-chapter').value); if(!chapter) return; if(chapter.fields?.parentPartId) $('#reveal-part').value=chapter.fields.parentPartId; else $('#reveal-part').value=''; if(chapter.fields?.parentBookId) $('#reveal-book').value=chapter.fields.parentBookId; else syncFromPart(); };
+  const syncFromScene=()=>{ const scene=entityById($('#reveal-scene').value); if(scene?.fields?.parentChapterId){ $('#reveal-chapter').value=scene.fields.parentChapterId; syncFromChapter(); } };
+  $('#reveal-part').onchange=syncFromPart;
+  $('#reveal-chapter').onchange=syncFromChapter;
+  $('#reveal-scene').onchange=syncFromScene;
+  revealDialog.showModal();
+}
+async function saveReveal(event){
+  event.preventDefault();
+  const sceneId=$('#reveal-scene').value||null;
+  const scene=sceneId?entityById(sceneId):null;
+  const chapterId=scene?.fields?.parentChapterId||$('#reveal-chapter').value||null;
+  const chapter=chapterId?entityById(chapterId):null;
+  const partId=chapter?.fields?.parentPartId||$('#reveal-part').value||null;
+  const part=partId?entityById(partId):null;
+  const bookId=chapter?.fields?.parentBookId||part?.fields?.parentBookId||$('#reveal-book').value||null;
+  await putOne('reveals',{id:id(),title:$('#reveal-title').value.trim(),summary:$('#reveal-summary').value.trim(),readerKnowledge:$('#reveal-reader').value.trim(),mysteryId:$('#reveal-mystery').value||null,targetEntityId:$('#reveal-target').value||null,bookId,partId,chapterId,sceneId,createdAt:now(),updatedAt:now()});
+  revealDialog.close(); await refreshState(); renderRoute(); toast('Reveal saved.');
+}
+function openKnowledgeEditor(preselectedCharacter=''){ $('#knowledge-form').reset(); $('#knowledge-subject-select').innerHTML=entityOptions(null,'',''); $('#knowledge-knower').innerHTML='<option value="">Choose character…</option>'+entityOptions(['character'],preselectedCharacter,''); $('#knowledge-story').innerHTML='<option value="">No story point</option>'+entityOptions(['book','part','chapter','scene'],'',''); $('#knowledge-state-select').innerHTML=KNOWLEDGE_STATES.map(s=>`<option>${esc(s)}</option>`).join(''); if(preselectedCharacter){ $('#knowledge-kind').value='character'; $('#knowledge-knower-wrap').classList.remove('hidden'); } knowledgeDialog.showModal(); }
 async function saveKnowledge(event){ event.preventDefault(); const kind=$('#knowledge-kind').value; const knower=kind==='reader'?null:$('#knowledge-knower').value; if(kind==='character'&&!knower) return toast('Choose a character.'); await putOne('knowledge',{id:id(),subjectEntityId:$('#knowledge-subject-select').value,knowerKind:kind,knowerEntityId:knower,state:$('#knowledge-state-select').value,belief:$('#knowledge-belief').value.trim(),truthNote:$('#knowledge-truth').value.trim(),storyEntityId:$('#knowledge-story').value||null,createdAt:now(),updatedAt:now()}); knowledgeDialog.close(); await refreshState(); renderRoute(); toast('Knowledge record saved.'); }
 function openMapVersionEditor(mapId){ $('#map-version-form').reset(); $('#map-version-map').value=mapId; $('#map-version-variant').innerHTML=MAP_VARIANTS.map(v=>`<option>${esc(v)}</option>`).join(''); mapVersionDialog.showModal(); }
 async function saveMapVersion(event){ event.preventDefault(); const file=$('#map-version-file').files[0]; if(!file) return; const mediaId=id(); await putOne('media',{id:mediaId,name:file.name,title:$('#map-version-label').value.trim()||file.name,mime:file.type,size:file.size,blob:file,tags:['map'],entityIds:[$('#map-version-map').value],createdAt:now()}); const versionId=id(); await putOne('mapVersions',{id:versionId,mapId:$('#map-version-map').value,mediaId,label:$('#map-version-label').value.trim()||file.name,variant:$('#map-version-variant').value,effectiveDate:$('#map-version-date').value.trim(),notes:$('#map-version-notes').value.trim(),createdAt:now()}); state.selectedMapVersionId=versionId; mapVersionDialog.close(); await refreshState(); renderMaps($('#map-version-map').value); toast('Map version added.'); }
@@ -567,15 +758,26 @@ async function exportZipAction(){ toast('Building ZIP backup…'); const blob=aw
 async function exportMarkdownAction(){ const markdown=buildMarkdownExport({project:projectSetting(),entities:state.entities,relations:state.relations,clues:state.clues,reveals:state.reveals,knowledge:state.knowledge,mapVersions:state.mapVersions,mapMarkers:state.mapMarkers}); downloadBlob(new Blob([markdown],{type:'text/markdown'}),`${safeName()}-${new Date().toISOString().slice(0,10)}.md`); toast('Markdown exported.'); }
 async function importBackupFile(file){ try{ if(!confirm('Restore this backup and replace the current cloud database? Export your current data first if you need to keep it.')) return; if(file.name.toLowerCase().endsWith('.zip')||file.type==='application/zip') await restoreZipBackup(file,{replace:true}); else await restoreBackup(JSON.parse(await file.text()),{replace:true}); await refreshState(); renderRoute(); toast('Backup restored.'); }catch(error){ console.error(error); toast(error.message||'Could not restore backup.'); } }
 
-function searchResultsHtml(q){
+function searchResultsHtml(q,remoteResults=null){
   const commands=[['Create Character','new:character'],['Create Location','new:location'],['Create Idea','new:idea'],['Open Continuity','route:continuity'],['Open Plot Grid','route:plot-grid'],['Open Timeline','route:timeline'],['Open Maps','route:maps'],['Open Workbench','route:workbench'],['Export ZIP Backup','action:export-zip']];
   if(q.startsWith('>')){ const term=q.slice(1).trim().toLowerCase(),rows=commands.filter(([name])=>name.toLowerCase().includes(term)); return rows.length?rows.map(([name,command])=>`<button type="button" class="search-result" data-command="${esc(command)}"><span><strong>${esc(name)}</strong><span class="muted small">Command</span></span></button>`).join(''):'<div class="empty-state">No commands match.</div>'; }
-  const results=searchEntities(activeEntities(),q).slice(0,9); const wq=q.toLowerCase(); const workspace=state.workspace.filter(w=>['contextNote','task','plotThread','savedView'].includes(w.kind)&&[w.title,JSON.stringify(w.data||{})].join(' ').toLowerCase().includes(wq)).slice(0,4);
+  const results=(remoteResults||searchEntities(activeEntities(),q)).slice(0,9),wq=q.toLowerCase();
+  const workspace=state.workspace.filter(w=>['contextNote','task','plotThread','savedView'].includes(w.kind)&&[w.title,JSON.stringify(w.data||{})].join(' ').toLowerCase().includes(wq)).slice(0,4);
   return [...results.map(e=>`<button type="button" class="search-result" data-global-result="${esc(e.id)}"><span><strong>${esc(e.name)}</strong><span class="muted small">${esc(typeLabel(e.type))} • ${esc(e.summary||'')}</span></span>${badge(e.status)}</button>`),...workspace.map(w=>`<button type="button" class="search-result" data-workspace-result="${esc(w.id)}"><span><strong>${esc(w.title||w.kind)}</strong><span class="muted small">${esc(w.kind.replaceAll(/([A-Z])/g,' $1'))}</span></span></button>`)].join('')||'<div class="empty-state">No matches.</div>';
 }
-function updateSearch(input,popover,{hideWhenEmpty=true}={}){
-  const q=input?.value.trim()||''; if(!q){ popover.innerHTML=''; if(hideWhenEmpty) popover.classList.add('hidden'); return; }
-  popover.innerHTML=searchResultsHtml(q); popover.classList.remove('hidden');
+let searchRequestSequence=0;
+async function updateSearch(input,popover,{hideWhenEmpty=true}={}){
+  const q=input?.value.trim()||'',requestId=++searchRequestSequence;
+  if(!q){ popover.innerHTML=''; if(hideWhenEmpty) popover.classList.add('hidden'); return; }
+  if(q.startsWith('>')){ popover.innerHTML=searchResultsHtml(q); popover.classList.remove('hidden'); return; }
+  popover.innerHTML='<div class="muted small">Searching canonical records…</div>'; popover.classList.remove('hidden');
+  try{
+    const result=await queryEntities({q,limit:9,archived:'active'}); if(requestId!==searchRequestSequence) return;
+    for(const entity of result.records) if(!state.entities.some(item=>item.id===entity.id)) state.entities.push(entity);
+    popover.innerHTML=searchResultsHtml(q,result.records);
+  }catch(error){
+    console.warn('Server-side search failed; using loaded records.',error); if(requestId!==searchRequestSequence) return; popover.innerHTML=searchResultsHtml(q);
+  }
 }
 function clearSearchUi(){
   for(const selector of ['#global-search','#palette-search']){ const input=$(selector); if(input) input.value=''; }
@@ -598,7 +800,7 @@ function bindStaticEvents(){
   $('#sidebar-search').addEventListener('click',()=>{ if(narrow()) $('#sidebar').classList.remove('open'); openSearchDialog(); });
   $('#quick-add').addEventListener('click',()=>openEntryEditor('lore')); $('#random-entry').addEventListener('click',()=>{ const pool=activeEntities(); if(!pool.length) return toast('Create an entry first.'); const pick=pool[Math.floor(Math.random()*pool.length)]; setRoute(sectionForType(pick.type),pick.id); });
   $('#entry-form').addEventListener('submit',saveEntity); $('#close-entry-dialog').addEventListener('click',()=>entryDialog.close()); $('#cancel-entry').addEventListener('click',()=>entryDialog.close()); $('#archive-entry').addEventListener('click',archiveCurrentEntity); $('#delete-entry').addEventListener('click',deleteEntityConfirmed);
-  $('#relation-form').addEventListener('submit',saveRelation); $('#close-relation-dialog').addEventListener('click',()=>relationDialog.close()); $('#cancel-relation').addEventListener('click',()=>relationDialog.close());
+  $('#relation-form').addEventListener('submit',saveRelation); $('#relation-from').addEventListener('input',refreshRelationTargetOptions); $('#close-relation-dialog').addEventListener('click',()=>{state.editingRelationId=null;relationDialog.close();}); $('#cancel-relation').addEventListener('click',()=>{state.editingRelationId=null;relationDialog.close();});
   $('#media-form').addEventListener('submit',saveMedia); $('#close-media-dialog').addEventListener('click',()=>{state.pendingPortraitEntityId=null;mediaDialog.close();}); $('#cancel-media').addEventListener('click',()=>{state.pendingPortraitEntityId=null;mediaDialog.close();}); $('#close-media-viewer').addEventListener('click',()=>mediaViewerDialog.close()); $('#media-viewer-prev').addEventListener('click',()=>stepMediaViewer(-1)); $('#media-viewer-next').addEventListener('click',()=>stepMediaViewer(1)); $('#media-viewer-zoom-in').addEventListener('click',()=>setMediaViewerZoom(state.mediaViewerZoom+.25)); $('#media-viewer-zoom-out').addEventListener('click',()=>setMediaViewerZoom(state.mediaViewerZoom-.25)); $('#media-viewer-zoom-reset').addEventListener('click',()=>setMediaViewerZoom(1));
   $('#clue-form').addEventListener('submit',saveClue); $('#close-clue-dialog').addEventListener('click',()=>clueDialog.close()); $('#cancel-clue').addEventListener('click',()=>clueDialog.close());
   $('#reveal-form').addEventListener('submit',saveReveal); $('#close-reveal-dialog').addEventListener('click',()=>revealDialog.close()); $('#cancel-reveal').addEventListener('click',()=>revealDialog.close());
@@ -610,7 +812,22 @@ function bindStaticEvents(){
   document.addEventListener('keydown',event=>{ if(mediaViewerDialog?.open&&event.key==='ArrowLeft'){ event.preventDefault(); stepMediaViewer(-1); return; } if(mediaViewerDialog?.open&&event.key==='ArrowRight'){ event.preventDefault(); stepMediaViewer(1); return; } if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='k'){ event.preventDefault(); openSearchDialog(); } if((event.key==='Enter'||event.key===' ')&&event.target.matches?.('.graph-click')){ event.preventDefault(); const e=entityById(event.target.dataset.openEntry); if(e) setRoute(event.target.dataset.openRoute||sectionForType(e.type),e.id); } });
 
   document.addEventListener('click',async event=>{
-    const target=event.target.closest('[data-new-entry],[data-edit-entry],[data-close-detail],[data-command],[data-workspace-result],[data-add-plot-beat],[data-delete-workspace],[data-toggle-workspace],[data-open-saved-view],[data-add-whiteboard-node],[data-convert-note],[data-generate-name],[data-toggle-focus],[data-export-manuscript],[data-suggest-link-from],[data-restore-revision],[data-open-entry],[data-toggle-favorite],[data-add-relation],[data-delete-relation],[data-add-media],[data-add-portrait],[data-set-portrait],[data-clear-portrait],[data-upload-media],[data-view-media],[data-media-card-size],[data-delete-media],[data-global-result],[data-convert-idea],[data-unarchive-entry],[data-add-clue],[data-delete-clue],[data-add-reveal],[data-delete-reveal],[data-add-knowledge],[data-add-knowledge-for],[data-delete-knowledge],[data-add-map-version],[data-map-version],[data-delete-map-version],[data-delete-marker],[data-open-map],[data-zoom-map],[data-new-map-for],[data-recover-draft],[data-discard-draft]');
+    const inlineEdit=event.target.closest('[data-inline-edit-field]');
+    if(inlineEdit){
+      const section=inlineEdit.closest('[data-inline-section]');
+      section?.querySelector('.inline-field-display')?.classList.add('hidden');
+      section?.querySelector('.inline-edit-form')?.classList.remove('hidden');
+      section?.querySelector('[data-inline-input]')?.focus();
+      return;
+    }
+    const inlineCancel=event.target.closest('[data-inline-edit-cancel]');
+    if(inlineCancel){
+      const section=inlineCancel.closest('[data-inline-section]');
+      section?.querySelector('.inline-field-display')?.classList.remove('hidden');
+      section?.querySelector('.inline-edit-form')?.classList.add('hidden');
+      return;
+    }
+    const target=event.target.closest('[data-new-entry],[data-edit-entry],[data-close-detail],[data-command],[data-workspace-result],[data-add-plot-beat],[data-delete-workspace],[data-toggle-workspace],[data-open-saved-view],[data-add-whiteboard-node],[data-convert-note],[data-generate-name],[data-toggle-focus],[data-export-manuscript],[data-suggest-link-from],[data-restore-revision],[data-open-entry],[data-toggle-favorite],[data-add-relation],[data-edit-relation],[data-delete-relation],[data-add-media],[data-add-portrait],[data-set-portrait],[data-clear-portrait],[data-upload-media],[data-view-media],[data-media-card-size],[data-delete-media],[data-global-result],[data-convert-idea],[data-unarchive-entry],[data-add-clue],[data-delete-clue],[data-add-reveal],[data-delete-reveal],[data-add-knowledge],[data-add-knowledge-for],[data-delete-knowledge],[data-add-map-version],[data-map-version],[data-delete-map-version],[data-delete-marker],[data-open-map],[data-zoom-map],[data-new-map-for],[data-recover-draft],[data-discard-draft]');
     if(target){
       if(await v3().handleClick(target)) return;
       if(target.dataset.command){ const [kind,value]=target.dataset.command.split(':'); clearSearchUi(); closeSearchDialog(); if(kind==='new')openEntryEditor(value); if(kind==='route')setRoute(value); if(kind==='action'&&value==='export-zip')await exportZipAction(); }
@@ -621,6 +838,7 @@ function bindStaticEvents(){
       if(target.dataset.openEntry){ const e=entityById(target.dataset.openEntry); if(e) setRoute(target.dataset.openRoute||sectionForType(e.type),e.id); }
       if(target.dataset.toggleFavorite) await toggleFavorite(target.dataset.toggleFavorite);
       if(target.dataset.addRelation) openRelationEditor(target.dataset.addRelation);
+      if(target.dataset.editRelation) openRelationEditor('',target.dataset.editRelation);
       if(target.dataset.deleteRelation){ event.stopPropagation(); await deleteOne('relations',target.dataset.deleteRelation); await refreshState(); renderRoute(); toast('Link removed.'); }
       if(target.dataset.addMedia) openMediaEditor(target.dataset.addMedia,''); if(target.dataset.addPortrait) openMediaEditor(target.dataset.addPortrait,'portrait',target.dataset.addPortrait); if(target.dataset.setPortrait) await setCharacterPortrait(target.dataset.setPortrait,target.dataset.portraitMedia); if(target.dataset.clearPortrait) await clearCharacterPortrait(target.dataset.clearPortrait); if(target.hasAttribute('data-upload-media')) openMediaEditor('',target.dataset.uploadMedia||''); if(target.dataset.viewMedia) openMediaViewer(target.dataset.viewMedia,target.dataset.viewContext||''); if(target.dataset.mediaCardSize) adjustMediaCardSize(target.dataset.mediaId,target.dataset.mediaCardSize,target);
       if(target.dataset.deleteMedia){ const used=state.mapVersions.filter(v=>v.mediaId===target.dataset.deleteMedia),portraitUsers=state.entities.filter(e=>portraitCapable(e)&&e.fields?.portraitMediaId===target.dataset.deleteMedia); if(used.length) toast('This image is used by a map version. Delete that map version first.'); else if(portraitUsers.length) toast(`This image is the portrait for ${portraitUsers.map(e=>e.name).join(', ')}. Remove it as the portrait first.`); else if(confirm('Remove this media item from the private media library?')){ await deleteOne('media',target.dataset.deleteMedia); await refreshState(); renderRoute(); toast('Media removed.'); } }
@@ -643,10 +861,10 @@ function bindStaticEvents(){
       if(target.dataset.zoomMap){ if(target.dataset.zoomMap==='fit') state.mapZoom=100; else if(target.dataset.zoomMap==='in') state.mapZoom=Math.min(300,state.mapZoom+25); else state.mapZoom=Math.max(25,state.mapZoom-25); renderMaps(route().selected); }
       if(target.dataset.deleteMarker&&confirm('Remove this marker?')){ await deleteOne('mapMarkers',target.dataset.deleteMarker); await refreshState(); renderMaps(route().selected); }
     }
-    if(event.target.id==='import-legacy-db'){ if(confirm('Import the legacy V1 browser database and replace the current cloud database? Export the cloud database first if it already contains anything you need.')){ try{ toast('Reading V1 browser database…'); const backup=await readLegacyBackup(); await restoreBackup(backup,{replace:true}); await refreshState(); renderRoute(); toast('V1 browser database migrated to cloud storage.'); }catch(error){ console.error(error); toast(error.message||'Legacy migration failed.'); } } } if(event.target.id==='export-backup') await exportBackupAction(); if(event.target.id==='export-zip') await exportZipAction(); if(event.target.id==='import-backup') $('#import-file').click(); if(event.target.id==='export-markdown') await exportMarkdownAction(); if(!event.target.closest('.search-wrap')) $('#search-popover').classList.add('hidden');
+    if(event.target.id==='import-legacy-db'){ if(confirm('Import the legacy V1 browser database and replace the current cloud database? Export the cloud database first if it already contains anything you need.')){ try{ toast('Reading V1 browser database…'); const backup=await readLegacyBackup(); await restoreBackup(backup,{replace:true}); await refreshState(); renderRoute(); toast('V1 browser database migrated to cloud storage.'); }catch(error){ console.error(error); toast(error.message||'Legacy migration failed.'); } } } if(event.target.id==='export-backup') await exportBackupAction(); if(event.target.id==='export-zip') await exportZipAction(); if(event.target.id==='import-backup') $('#import-file').click(); if(event.target.id==='export-markdown') await exportMarkdownAction(); if(event.target.id==='run-diagnostics') await runArchitectureDiagnostics(false); if(event.target.id==='run-deep-diagnostics') await runArchitectureDiagnostics(true); if(event.target.id==='rebuild-reference-index') await rebuildDerivedReferenceIndex(); if(!event.target.closest('.search-wrap')) $('#search-popover').classList.add('hidden');
   });
 
-  document.addEventListener('submit',async event=>{ if(event.target.id==='quick-idea-form') quickIdea(event); if(event.target.id==='project-settings'){ event.preventDefault(); const project={...projectSetting(),name:$('#setting-project-name').value.trim()||'UnWritten.KayWorks',currentBookId:$('#setting-current-book').value||null}; await putOne('settings',{key:'project',value:project}); await refreshState(); renderRoute(); toast('Project settings saved.'); } });
+  document.addEventListener('submit',async event=>{ if(event.target.matches('.inline-edit-form')){ event.preventDefault(); await saveInlineField(event.target); return; } if(event.target.id==='quick-idea-form') quickIdea(event); if(event.target.id==='project-settings'){ event.preventDefault(); const project={...projectSetting(),name:$('#setting-project-name').value.trim()||'UnWritten.KayWorks',currentBookId:$('#setting-current-book').value||null}; await putOne('settings',{key:'project',value:project}); await refreshState(); renderRoute(); toast('Project settings saved.'); } });
 }
 
 async function boot(){ try{ state.storageStatus=await getStorageStatus(); if(state.storageStatus?.role!=='reviewer') await initializeDefaults(); await refreshState(); await refreshDrafts(); state.legacyAvailable=await hasLegacyDatabase(); bindStaticEvents(); if(!location.hash)setRoute('dashboard');else renderRoute(); if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{}); }catch(error){ console.error(error); main.innerHTML=pageHeader('Storage setup required','UnWritten.KayWorks could not connect to its Cloudflare database.','')+`<section class="card"><h2>Cloud storage is not ready</h2><p class="prose">${esc(error.message||'Could not reach D1/R2.')}</p><p class="muted small">For a new V3 deployment, apply the D1 migration first, then redeploy/reload the Worker. The repository includes the exact command in README.md.</p></section>`; } }

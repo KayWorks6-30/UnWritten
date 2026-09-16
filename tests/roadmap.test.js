@@ -10,7 +10,9 @@ import { buildMarkdownExport } from '../js/data/markdown.js';
 
 test('roadmap schema includes structured parent helpers and map records', () => {
   assert.ok(ENTRY_TYPES.location.fields.some(f=>f.key==='parentLocationId'&&f.type==='entity'));
+  assert.ok(ENTRY_TYPES.part?.fields.some(f=>f.key==='parentBookId'));
   assert.ok(ENTRY_TYPES.chapter.fields.some(f=>f.key==='parentBookId'));
+  assert.ok(ENTRY_TYPES.chapter.fields.some(f=>f.key==='parentPartId'));
   assert.ok(ENTRY_TYPES.scene.fields.some(f=>f.key==='parentChapterId'));
   assert.ok(ENTRY_TYPES.map);
   assert.ok(SCHEMA_VERSION >= 4);
@@ -26,13 +28,16 @@ test('timeline sorts numeric ranges before unknown text and keeps display wordin
   assert.equal(eventRangeLabel(earlier),'Traditional reign');
 });
 
-test('story helpers resolve Book → Chapter → Scene order and path', () => {
+test('story helpers resolve Book → optional Part → Chapter → Scene order and path', () => {
   const book={id:'b',type:'book',name:'Book I',fields:{order:'1'}};
-  const chapter={id:'c',type:'chapter',name:'Chapter 4',fields:{parentBookId:'b',number:'4'}};
+  const part={id:'p',type:'part',name:'Part I',fields:{parentBookId:'b',order:'1'}};
+  const chapter={id:'c',type:'chapter',name:'Chapter 4',fields:{parentBookId:'b',parentPartId:'p',number:'4'}};
   const scene={id:'s',type:'scene',name:'Ruin',fields:{parentChapterId:'c',order:'2'}};
-  const entities=[book,chapter,scene];
-  assert.deepEqual(storyOrder(scene,entities),[1,4,2]);
-  assert.equal(storyPath(scene,entities),'Book I → Chapter 4 → Ruin');
+  const entities=[book,part,chapter,scene];
+  assert.deepEqual(storyOrder(scene,entities),[1,1,4,2,3]);
+  assert.equal(storyPath(scene,entities),'Book I → Part I → Chapter 4 → Ruin');
+  const direct={id:'d',type:'chapter',name:'Prologue',fields:{parentBookId:'b',number:'0'}};
+  assert.deepEqual(storyOrder(direct,[...entities,direct]),[1,0,0,-1,2]);
 });
 
 test('relationship neighborhood respects depth and family levels infer generations', () => {

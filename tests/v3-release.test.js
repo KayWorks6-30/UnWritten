@@ -31,7 +31,7 @@ test('large structured restore is submitted as one atomic D1 batch',async()=>{
   }));
   await assert.rejects(()=>replaceStructuredSnapshot({DB},manifest,[]),/injected failure/);
   assert.equal(calls.length,1,'restore must never split the destructive replacement across multiple DB.batch calls');
-  assert.equal(calls[0].length,130,'10 table clears + 120 entity upserts must be in the same transaction');
+  assert.equal(calls[0].length,131,'10 canonical clears + reverse-index clear + 120 entity upserts must share the same transaction');
 });
 
 test('reviewer mutation is rejected before a write route can run',async()=>{
@@ -62,9 +62,10 @@ test('stale entity update returns HTTP 409',async()=>{
     },
     async batch(){ throw new Error('batch must not run for a stale update'); }
   };
-  const response=await handleApi(new Request('https://unwritten.test/api/store/entities/e1',{method:'PUT',headers:{'content-type':'application/json','x-base-updated-at':'2026-09-12T11:00:00.000Z'},body:JSON.stringify(incoming)}),{DB},{role:'owner',email:'owner@example.test'});
-  assert.equal(response.status,409);
-  assert.match((await response.json()).error,/changed elsewhere/i);
+  await assert.rejects(
+    ()=>handleApi(new Request('https://unwritten.test/api/store/entities/e1',{method:'PUT',headers:{'content-type':'application/json','x-base-updated-at':'2026-09-12T11:00:00.000Z'},body:JSON.stringify(incoming)}),{DB},{role:'owner',email:'owner@example.test'}),
+    error=>error?.status===409 && /changed elsewhere/i.test(error.message)
+  );
 });
 
 test('location parent-cycle PUT is rejected behaviorally',async()=>{
@@ -103,7 +104,8 @@ test('V3 service worker precaches the complete V3 boot modules and browser ident
     readFile(new URL('../index.html',import.meta.url),'utf8'),
     readFile(new URL('../manifest.webmanifest',import.meta.url),'utf8')
   ]);
-  assert.match(sw,/unwritten-v3\.2\.0/);
+  assert.match(sw,/unwritten-v3\.5\.1/);
+  assert.match(sw,/\.\/js\/data\/api\.js/);
   assert.match(sw,/\.\/js\/domain\/intelligence\.js/);
   assert.match(sw,/\.\/js\/ui\/v3\.js/);
   assert.match(html,/<title>UnWritten<\/title>/);
@@ -118,14 +120,18 @@ test('V3 service worker precaches the complete V3 boot modules and browser ident
 });
 
 test('normal snapshots exclude revision rows and revisions have lazy API routes',async()=>{
-  const worker=await readFile(new URL('../worker/index.js',import.meta.url),'utf8');
+  const [worker,cascade]=await Promise.all([
+    readFile(new URL('../worker/index.js',import.meta.url),'utf8'),
+    readFile(new URL('../worker/lib/cascade.js',import.meta.url),'utf8')
+  ]);
   assert.match(worker,/SELECT \* FROM workspace WHERE kind <> 'revision'/);
   assert.match(worker,/\/api\\\/entities\\\/\(\[\^\/\]\+\)\\\/revisions/);
   assert.match(worker,/path==='\/api\/revisions'/);
-  assert.match(worker,/if\(item\.kind==='revision'\) return d\.entityId===id/);
+  assert.match(cascade,/if\(item\?\.kind==='revision'\) return d\.entityId===id/);
 });
 
-test('entity revision and update share one D1 batch',async()=>{
+test('entity revision, canonical update, and reverse-index maintenance share one D1 batch',async()=>{
   const worker=await readFile(new URL('../worker/index.js',import.meta.url),'utf8');
-  assert.match(worker,/env\.DB\.batch\(revision\?\[revision,upsertStatement\(env,store,record\)\]/);
+  assert.match(worker,/const writes=\[\.\.\.\(revision\?\[revision\]:\[\]\),upsertStatement\(env,store,normalized\),\.\.\.referenceIndexStatements\(env,store,normalized\)\]/);
+  assert.match(worker,/await env\.DB\.batch\(writes\)/);
 });

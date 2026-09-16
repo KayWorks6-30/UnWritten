@@ -31,7 +31,7 @@ test('collection pages use top filters, closable detail, results below, and auto
 });
 
 
-test('V3.2.0 portrait layout, per-image sizing, viewer zoom, archive fix, and persistent Wrangler vars are wired',async()=>{
+test('V3.2.1 portrait layout, per-image sizing, viewer zoom, archive fix, and persistent Wrangler vars are wired',async()=>{
   const [app,index,css,wrangler]=await Promise.all([
     readFile(new URL('../js/app.js',import.meta.url),'utf8'),
     readFile(new URL('../index.html',import.meta.url),'utf8'),
@@ -53,17 +53,27 @@ test('V3.2.0 portrait layout, per-image sizing, viewer zoom, archive fix, and pe
   assert.match(wrangler,/"keep_vars"\s*:\s*true/);
 });
 
-test('V3.2.0 collection discovery supports searchable multi-tag filters and organization preferences',async()=>{
+test('V3.2.2 collection discovery uses explicit search, card-first lore views, clean grouping, and inline field editing',async()=>{
   const [app,css]=await Promise.all([read('js/app.js'),read('styles.css')]);
   assert.match(app,/id="collection-tag-search"/);
-  assert.match(app,/id="collection-tag-mode"/);
+  assert.match(app,/id="collection-tag-browse"/);
+  assert.match(app,/id="toggle-tag-picker"/);
+  assert.match(app,/id="apply-collection-filters"/);
   assert.match(app,/Match all selected/);
   assert.match(app,/Match any selected/);
   assert.match(app,/id="collection-sort"/);
   assert.match(app,/id="collection-group"/);
+  assert.doesNotMatch(app,/<option value="alpha"/);
   assert.match(app,/id="collection-view"/);
   assert.match(app,/unwritten\.collectionPreferences/);
-  assert.match(app,/routeName==='characters'[\s\S]*sort:'name-asc',group:'alpha',view:'cards'/);
+  assert.match(app,/const mixedByType=\['entries','world','history','story','mysteries'\]/);
+  assert.match(app,/view:'cards'/);
+  assert.match(app,/COLLECTION_PREFERENCES_KEY='unwritten\.collectionPreferences\.v2'/);
+  assert.match(app,/class=\"collection-entity-card \${showPortrait\?'has-portrait':'text-only'}/);
+  assert.match(app,/class="collection-result-count"/);
+  assert.match(app,/data-inline-edit-field/);
+  assert.match(app,/saveInlineField/);
   assert.match(css,/\.collection-card-grid/);
   assert.match(css,/\.tag-picker-options/);
+  assert.match(css,/\.inline-field-title/);
 });

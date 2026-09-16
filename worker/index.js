@@ -1,10 +1,11 @@
-import { RELATION_TYPES, KNOWLEDGE_STATES, MAP_VARIANTS, WORKSPACE_KINDS, validateEntity } from '../js/domain/schema.js';
+import { APP_VERSION, RELATION_TYPES, RELATION_STATUSES, STORY_POINT_TYPES, KNOWLEDGE_STATES, MAP_VARIANTS, WORKSPACE_KINDS, validateEntity, referenceFieldsForType } from '../js/domain/schema.js';
+import { referenceEdgesForRecord, buildReferenceIndex } from '../js/domain/references.js';
 import { migrateBackupData } from '../js/data/migrations.js';
 import { assertValidBackupSnapshot } from '../js/data/validation.js';
+import { DATA_STORES, TABLE, rowToRecord, upsertStatement, readStore, readRecord } from './lib/records.js';
+import { planEntityCascade, planMapVersionCascade, planWorkspaceDelete, cleanupPlotBeatLinks } from './lib/cascade.js';
 
-const DATA_STORES = ['entities','relations','media','settings','clues','reveals','knowledge','mapVersions','mapMarkers','workspace'];
 const JSON_HEADERS = { 'content-type':'application/json; charset=utf-8', 'cache-control':'no-store' };
-const TABLE = { entities:'entities', relations:'relations', media:'media', settings:'settings', clues:'clues', reveals:'reveals', knowledge:'knowledge', mapVersions:'map_versions', mapMarkers:'map_markers', workspace:'workspace' };
 const JWKS_CACHE = new Map();
 
 function json(data,status=200,extra={}){ return new Response(JSON.stringify(data),{status,headers:{...JSON_HEADERS,...extra}}); }
@@ -38,36 +39,6 @@ async function authenticate(request,env){
 }
 function requireOwner(identity){ if(identity?.role!=='owner') throw Object.assign(new Error('Reviewer access is read-only.'),{status:403}); }
 
-function rowToRecord(store,row){
-  if(!row) return null;
-  if(store==='entities') return {id:row.id,type:row.type,name:row.name,summary:row.summary||'',status:row.status,tags:safeJson(row.tags_json,[]),favorite:Boolean(row.favorite),fields:safeJson(row.fields_json,{}),notes:row.notes||'',archivedAt:row.archived_at||null,createdAt:row.created_at,updatedAt:row.updated_at};
-  if(store==='relations') return {id:row.id,fromId:row.from_id,toId:row.to_id,type:row.type,note:row.note||'',generatedParent:Boolean(row.generated_parent),eraId:row.era_id||null,activeFrom:row.active_from||'',activeTo:row.active_to||'',createdAt:row.created_at,updatedAt:row.updated_at||row.created_at};
-  if(store==='settings') return {key:row.key,value:safeJson(row.value_json,{})};
-  if(store==='media') return {id:row.id,name:row.name,title:row.title,mime:row.mime,size:Number(row.size)||0,r2Key:row.r2_key,tags:safeJson(row.tags_json,[]),entityIds:safeJson(row.entity_ids_json,[]),createdAt:row.created_at,url:`/api/media/${encodeURIComponent(row.id)}/content`};
-  if(store==='clues') return {id:row.id,mysteryId:row.mystery_id,mysteryIds:safeJson(row.mystery_ids_json,[]),label:row.label||'',kind:row.kind||'',description:row.description||'',storyEntityId:row.story_entity_id||null,visibility:row.visibility||'',firstRead:row.first_read||'',trueInterpretation:row.true_interpretation||'',order:row.order_value||'',createdAt:row.created_at,updatedAt:row.updated_at};
-  if(store==='reveals') return {id:row.id,title:row.title||'',summary:row.summary||'',readerKnowledge:row.reader_knowledge||'',mysteryId:row.mystery_id||null,targetEntityId:row.target_entity_id||null,bookId:row.book_id||null,chapterId:row.chapter_id||null,sceneId:row.scene_id||null,createdAt:row.created_at,updatedAt:row.updated_at};
-  if(store==='knowledge') return {id:row.id,subjectEntityId:row.subject_entity_id,knowerKind:row.knower_kind,knowerEntityId:row.knower_entity_id||null,state:row.state,belief:row.belief||'',truthNote:row.truth_note||'',storyEntityId:row.story_entity_id||null,createdAt:row.created_at,updatedAt:row.updated_at};
-  if(store==='mapVersions') return {id:row.id,mapId:row.map_id,mediaId:row.media_id,label:row.label||'',variant:row.variant||'',effectiveDate:row.effective_date||'',notes:row.notes||'',createdAt:row.created_at};
-  if(store==='mapMarkers') return {id:row.id,mapVersionId:row.map_version_id,locationId:row.location_id,x:Number(row.x),y:Number(row.y),label:row.label||'',category:row.category||'',icon:row.icon||'',customMediaId:row.custom_media_id||null,tags:safeJson(row.tags_json,[]),activeFrom:row.active_from||'',activeTo:row.active_to||'',layerId:row.layer_id||null,factionId:row.faction_id||null,bookIds:safeJson(row.book_ids_json,[]),storyRelevance:row.story_relevance||'',active:row.active!==0,createdAt:row.created_at,updatedAt:row.updated_at||row.created_at};
-  if(store==='workspace') return {id:row.id,kind:row.kind,title:row.title||'',data:safeJson(row.data_json,{}),createdAt:row.created_at,updatedAt:row.updated_at};
-  return null;
-}
-
-function upsertStatement(env,store,r){
-  if(store==='entities') return env.DB.prepare(`INSERT INTO entities (id,type,name,summary,status,tags_json,favorite,fields_json,notes,archived_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET type=excluded.type,name=excluded.name,summary=excluded.summary,status=excluded.status,tags_json=excluded.tags_json,favorite=excluded.favorite,fields_json=excluded.fields_json,notes=excluded.notes,archived_at=excluded.archived_at,created_at=excluded.created_at,updated_at=excluded.updated_at`).bind(r.id,r.type,r.name,r.summary||'',r.status,JSON.stringify(r.tags||[]),r.favorite?1:0,JSON.stringify(r.fields||{}),r.notes||'',r.archivedAt||null,r.createdAt||now(),r.updatedAt||now());
-  if(store==='relations') return env.DB.prepare(`INSERT INTO relations (id,from_id,to_id,type,note,generated_parent,created_at,era_id,active_from,active_to,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET from_id=excluded.from_id,to_id=excluded.to_id,type=excluded.type,note=excluded.note,generated_parent=excluded.generated_parent,era_id=excluded.era_id,active_from=excluded.active_from,active_to=excluded.active_to,updated_at=excluded.updated_at`).bind(r.id,r.fromId,r.toId,r.type,r.note||'',r.generatedParent?1:0,r.createdAt||now(),r.eraId||null,r.activeFrom||'',r.activeTo||'',r.updatedAt||now());
-  if(store==='settings') return env.DB.prepare(`INSERT INTO settings (key,value_json) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json`).bind(r.key,JSON.stringify(r.value||{}));
-  if(store==='media') return env.DB.prepare(`INSERT INTO media (id,name,title,mime,size,r2_key,tags_json,entity_ids_json,created_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,title=excluded.title,mime=excluded.mime,size=excluded.size,r2_key=excluded.r2_key,tags_json=excluded.tags_json,entity_ids_json=excluded.entity_ids_json,created_at=excluded.created_at`).bind(r.id,r.name||'file',r.title||r.name||'file',r.mime||'application/octet-stream',Number(r.size)||0,r.r2Key,JSON.stringify(r.tags||[]),JSON.stringify(r.entityIds||[]),r.createdAt||now());
-  if(store==='clues') return env.DB.prepare(`INSERT INTO clues (id,mystery_id,mystery_ids_json,label,kind,description,story_entity_id,visibility,first_read,true_interpretation,order_value,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET mystery_id=excluded.mystery_id,mystery_ids_json=excluded.mystery_ids_json,label=excluded.label,kind=excluded.kind,description=excluded.description,story_entity_id=excluded.story_entity_id,visibility=excluded.visibility,first_read=excluded.first_read,true_interpretation=excluded.true_interpretation,order_value=excluded.order_value,updated_at=excluded.updated_at`).bind(r.id,r.mysteryId,JSON.stringify(r.mysteryIds||[]),r.label||'',r.kind||'',r.description||'',r.storyEntityId||null,r.visibility||'',r.firstRead||'',r.trueInterpretation||'',String(r.order??''),r.createdAt||now(),r.updatedAt||now());
-  if(store==='reveals') return env.DB.prepare(`INSERT INTO reveals (id,title,summary,reader_knowledge,mystery_id,target_entity_id,book_id,chapter_id,scene_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,summary=excluded.summary,reader_knowledge=excluded.reader_knowledge,mystery_id=excluded.mystery_id,target_entity_id=excluded.target_entity_id,book_id=excluded.book_id,chapter_id=excluded.chapter_id,scene_id=excluded.scene_id,updated_at=excluded.updated_at`).bind(r.id,r.title||'',r.summary||'',r.readerKnowledge||'',r.mysteryId||null,r.targetEntityId||null,r.bookId||null,r.chapterId||null,r.sceneId||null,r.createdAt||now(),r.updatedAt||now());
-  if(store==='knowledge') return env.DB.prepare(`INSERT INTO knowledge (id,subject_entity_id,knower_kind,knower_entity_id,state,belief,truth_note,story_entity_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET subject_entity_id=excluded.subject_entity_id,knower_kind=excluded.knower_kind,knower_entity_id=excluded.knower_entity_id,state=excluded.state,belief=excluded.belief,truth_note=excluded.truth_note,story_entity_id=excluded.story_entity_id,updated_at=excluded.updated_at`).bind(r.id,r.subjectEntityId,r.knowerKind,r.knowerEntityId||null,r.state,r.belief||'',r.truthNote||'',r.storyEntityId||null,r.createdAt||now(),r.updatedAt||now());
-  if(store==='mapVersions') return env.DB.prepare(`INSERT INTO map_versions (id,map_id,media_id,label,variant,effective_date,notes,created_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET map_id=excluded.map_id,media_id=excluded.media_id,label=excluded.label,variant=excluded.variant,effective_date=excluded.effective_date,notes=excluded.notes,created_at=excluded.created_at`).bind(r.id,r.mapId,r.mediaId,r.label||'',r.variant||'',r.effectiveDate||'',r.notes||'',r.createdAt||now());
-  if(store==='mapMarkers') return env.DB.prepare(`INSERT INTO map_markers (id,map_version_id,location_id,x,y,label,category,icon,custom_media_id,tags_json,active_from,active_to,layer_id,faction_id,book_ids_json,story_relevance,active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET map_version_id=excluded.map_version_id,location_id=excluded.location_id,x=excluded.x,y=excluded.y,label=excluded.label,category=excluded.category,icon=excluded.icon,custom_media_id=excluded.custom_media_id,tags_json=excluded.tags_json,active_from=excluded.active_from,active_to=excluded.active_to,layer_id=excluded.layer_id,faction_id=excluded.faction_id,book_ids_json=excluded.book_ids_json,story_relevance=excluded.story_relevance,active=excluded.active,updated_at=excluded.updated_at`).bind(r.id,r.mapVersionId,r.locationId,Number(r.x),Number(r.y),r.label||'',r.category||'',r.icon||'',r.customMediaId||null,JSON.stringify(r.tags||[]),r.activeFrom||'',r.activeTo||'',r.layerId||null,r.factionId||null,JSON.stringify(r.bookIds||[]),r.storyRelevance||'',r.active===false?0:1,r.createdAt||now(),r.updatedAt||now());
-  if(store==='workspace') return env.DB.prepare(`INSERT INTO workspace (id,kind,title,data_json,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,title=excluded.title,data_json=excluded.data_json,updated_at=excluded.updated_at`).bind(r.id,r.kind,r.title||'',JSON.stringify(r.data||{}),r.createdAt||now(),r.updatedAt||now());
-  throw new Error(`Unsupported store ${store}`);
-}
-
-async function readStore(env,store){ const result=await env.DB.prepare(`SELECT * FROM ${TABLE[store]}`).all(); return (result.results||[]).map(row=>rowToRecord(store,row)); }
 async function snapshot(env,{includeRevisions=false}={}){
   const started=Date.now();
   const statements=DATA_STORES.map(store=>env.DB.prepare(store==='workspace'&&!includeRevisions?`SELECT * FROM workspace WHERE kind <> 'revision'`:`SELECT * FROM ${TABLE[store]}`));
@@ -78,6 +49,31 @@ async function snapshot(env,{includeRevisions=false}={}){
   return data;
 }
 async function batchStatements(env,statements){ if(statements.length) await env.DB.batch(statements); }
+async function batchDerivedStatements(env,statements,{chunkSize=100}={}){
+  for(let i=0;i<statements.length;i+=chunkSize) await env.DB.batch(statements.slice(i,i+chunkSize));
+}
+function referenceIndexStatements(env,store,record){
+  const sourceId=store==='settings'?record?.key:record?.id;
+  if(!sourceId) return [];
+  const statements=[env.DB.prepare('DELETE FROM reference_index WHERE source_store=? AND source_id=?').bind(store,sourceId)];
+  for(const edge of referenceEdgesForRecord(store,record)) statements.push(env.DB.prepare(`INSERT INTO reference_index (source_store,source_id,source_field,target_entity_id,source_entity_id,kind) VALUES (?,?,?,?,?,?) ON CONFLICT(source_store,source_id,source_field,target_entity_id) DO UPDATE SET source_entity_id=excluded.source_entity_id,kind=excluded.kind`).bind(edge.sourceStore,edge.sourceId,edge.sourceField,edge.targetEntityId,edge.sourceEntityId||null,edge.kind||'Structured reference'));
+  return statements;
+}
+async function rebuildReferenceIndex(env,snapshotData=null){
+  const data=snapshotData||await snapshot(env,{includeRevisions:false});
+  const edges=buildReferenceIndex(data);
+  // reference_index is derived and rebuildable. Clear first, then repopulate in bounded
+  // batches so a large project cannot exceed D1's practical batch/request limits. If a
+  // rebuild is interrupted, deep diagnostics reports the missing edges and a rerun heals it.
+  await env.DB.batch([env.DB.prepare('DELETE FROM reference_index')]);
+  const statements=edges.map(edge=>env.DB.prepare(`INSERT INTO reference_index (source_store,source_id,source_field,target_entity_id,source_entity_id,kind) VALUES (?,?,?,?,?,?)`).bind(edge.sourceStore,edge.sourceId,edge.sourceField,edge.targetEntityId,edge.sourceEntityId||null,edge.kind||'Structured reference'));
+  await batchDerivedStatements(env,statements,{chunkSize:100});
+  return {edges:edges.length};
+}
+async function entityImpact(env,entityId){
+  const result=await env.DB.prepare('SELECT source_store,source_id,source_field,target_entity_id,source_entity_id,kind FROM reference_index WHERE target_entity_id=? ORDER BY source_store,source_id,source_field').bind(entityId).all();
+  return (result.results||[]).map(row=>({sourceStore:row.source_store,sourceId:row.source_id,sourceField:row.source_field,targetEntityId:row.target_entity_id,sourceEntityId:row.source_entity_id||null,kind:row.kind||'Structured reference'}));
+}
 async function readEntityRevisions(env,entityId,limit=50){
   const capped=Math.max(1,Math.min(100,Number(limit)||50));
   const result=await env.DB.prepare("SELECT * FROM workspace WHERE kind='revision' AND json_extract(data_json,'$.entityId')=? ORDER BY created_at DESC LIMIT ?").bind(entityId,capped).all();
@@ -102,36 +98,42 @@ async function assertNoParentCycle(env,candidate,key,type,label){
 async function validateRecord(env,store,r){
   if(store==='entities'){
     const errors=validateEntity(r); if(errors.length) throw new Error(errors[0]); const f=r.fields||{};
-    if(f.parentLocationId){ if(f.parentLocationId===r.id) throw new Error('A location cannot be its own parent.'); await requireEntity(env,f.parentLocationId,'location','Parent location'); }
-    if(f.parentBookId) await requireEntity(env,f.parentBookId,'book','Parent book');
-    if(f.parentChapterId) await requireEntity(env,f.parentChapterId,'chapter','Parent chapter');
-    if(f.eraId) await requireEntity(env,f.eraId,'era','Era');
-    if(f.scopeLocationId) await requireEntity(env,f.scopeLocationId,'location','Map scope location');
-    if(f.parentMapId){ if(f.parentMapId===r.id) throw new Error('A map cannot be its own parent map.'); await requireEntity(env,f.parentMapId,'map','Parent map'); }
-    if(f.storyEntityId) await requireEntity(env,f.storyEntityId,['chapter','scene'],'Story entry');
-    if(f.locationId) await requireEntity(env,f.locationId,'location','Location');
+    for(const spec of referenceFieldsForType(r.type)){
+      const values=spec.many?(Array.isArray(f[spec.key])?f[spec.key]:[]):[f[spec.key]];
+      for(const value of values){
+        if(!value) continue;
+        if(value===r.id && ['parentLocationId','parentMapId','parentBookId','parentPartId','parentChapterId'].includes(spec.key)) throw new Error(`${spec.role||'Parent'} cannot reference the entry itself.`);
+        await requireEntity(env,value,spec.types,spec.role||'Referenced entry');
+      }
+    }
+    if(r.type==='chapter'&&f.parentPartId){
+      const part=await requireEntity(env,f.parentPartId,'part','Parent part');
+      if(f.parentBookId&&part.fields?.parentBookId!==f.parentBookId) throw new Error('Selected part does not belong to selected book.');
+    }
     if(r.type==='location') await assertNoParentCycle(env,r,'parentLocationId','location','Location');
     if(r.type==='map') await assertNoParentCycle(env,r,'parentMapId','map','Map');
-    if(r.type==='trilogy') for(const id of f.protagonistIds||[]) await requireEntity(env,id,'character','Series protagonist');
     if(['character','deity'].includes(r.type)&&f.portraitMediaId&&!await rowExists(env,'media','id',f.portraitMediaId)) throw new Error('Character portrait media does not exist.');
     return;
   }
   if(store==='relations'){
-    if(!r?.id||!r.fromId||!r.toId||r.fromId===r.toId) throw new Error('Relationship endpoints are invalid.'); if(!RELATION_TYPES.includes(r.type)) throw new Error('Relationship type is invalid.'); await requireEntity(env,r.fromId); await requireEntity(env,r.toId); if(r.eraId) await requireEntity(env,r.eraId,'era','Relationship era'); return;
+    if(!r?.id||!r.fromId||!r.toId||r.fromId===r.toId) throw new Error('Relationship endpoints are invalid.'); if(!RELATION_TYPES.includes(r.type)) throw new Error('Relationship type is invalid.'); if(r.status&&!RELATION_STATUSES.includes(r.status)) throw new Error('Relationship status is invalid.'); await requireEntity(env,r.fromId); await requireEntity(env,r.toId); if(r.eraId) await requireEntity(env,r.eraId,'era','Relationship era'); return;
   }
   if(store==='settings'){
     if(!r?.key||!r.value||typeof r.value!=='object') throw new Error('Setting is invalid.');
     if(r.key==='project'){ if(r.value.currentBookId) await requireEntity(env,r.value.currentBookId,'book','Current book'); for(const id of r.value.storyCompass?.protagonistIds||[]) await requireEntity(env,id,'character','Story Compass protagonist'); }
     return;
   }
-  if(store==='clues'){ if(!r?.id) throw new Error('Clue id is required.'); await requireEntity(env,r.mysteryId,'mystery','Mystery'); for(const id of r.mysteryIds||[]) await requireEntity(env,id,'mystery','Linked mystery'); if(r.storyEntityId) await requireEntity(env,r.storyEntityId,['chapter','scene'],'Story entry'); return; }
+  if(store==='clues'){ if(!r?.id) throw new Error('Clue id is required.'); await requireEntity(env,r.mysteryId,'mystery','Mystery'); for(const id of r.mysteryIds||[]) await requireEntity(env,id,'mystery','Linked mystery'); if(r.storyEntityId) await requireEntity(env,r.storyEntityId,['part','chapter','scene'],'Story entry'); return; }
   if(store==='reveals'){
-    if(!r?.id) throw new Error('Reveal id is required.'); if(r.mysteryId) await requireEntity(env,r.mysteryId,'mystery','Mystery'); if(r.targetEntityId) await requireEntity(env,r.targetEntityId); const book=r.bookId?await requireEntity(env,r.bookId,'book','Book'):null; const chapter=r.chapterId?await requireEntity(env,r.chapterId,'chapter','Chapter'):null; const scene=r.sceneId?await requireEntity(env,r.sceneId,'scene','Scene'):null;
-    if(book&&chapter&&chapter.fields?.parentBookId!==book.id) throw new Error('Selected chapter does not belong to selected book.'); if(chapter&&scene&&scene.fields?.parentChapterId!==chapter.id) throw new Error('Selected scene does not belong to selected chapter.'); return;
+    if(!r?.id) throw new Error('Reveal id is required.'); if(r.mysteryId) await requireEntity(env,r.mysteryId,'mystery','Mystery'); if(r.targetEntityId) await requireEntity(env,r.targetEntityId); const book=r.bookId?await requireEntity(env,r.bookId,'book','Book'):null; const part=r.partId?await requireEntity(env,r.partId,'part','Part'):null; const chapter=r.chapterId?await requireEntity(env,r.chapterId,'chapter','Chapter'):null; const scene=r.sceneId?await requireEntity(env,r.sceneId,'scene','Scene'):null;
+    if(book&&part&&part.fields?.parentBookId!==book.id) throw new Error('Selected part does not belong to selected book.');
+    if(book&&chapter&&chapter.fields?.parentBookId!==book.id) throw new Error('Selected chapter does not belong to selected book.');
+    if(part&&chapter&&chapter.fields?.parentPartId!==part.id) throw new Error('Selected chapter does not belong to selected part.');
+    if(chapter&&scene&&scene.fields?.parentChapterId!==chapter.id) throw new Error('Selected scene does not belong to selected chapter.'); return;
   }
   if(store==='knowledge'){
     if(!r?.id||!KNOWLEDGE_STATES.includes(r.state)||!['reader','character'].includes(r.knowerKind)) throw new Error('Knowledge record is invalid.');
-    await requireEntity(env,r.subjectEntityId); if(r.knowerKind==='character') await requireEntity(env,r.knowerEntityId,'character','Character knower'); if(r.storyEntityId) await requireEntity(env,r.storyEntityId,['book','chapter','scene'],'Story entry');
+    await requireEntity(env,r.subjectEntityId); if(r.knowerKind==='character') await requireEntity(env,r.knowerEntityId,'character','Character knower'); if(r.storyEntityId) await requireEntity(env,r.storyEntityId,STORY_POINT_TYPES,'Story entry');
     const duplicate=await env.DB.prepare("SELECT id FROM knowledge WHERE subject_entity_id=? AND knower_kind=? AND COALESCE(knower_entity_id,'')=? AND COALESCE(story_entity_id,'')=? AND id<>? LIMIT 1").bind(r.subjectEntityId,r.knowerKind,r.knowerEntityId||'',r.storyEntityId||'',r.id).first();
     if(duplicate) throw new Error('A knowledge state already exists for this subject, knower, and story point. Edit that record instead.');
     return;
@@ -151,9 +153,84 @@ async function validateRecord(env,store,r){
     if(r.kind==='mapRoute'){ if(!await rowExists(env,'map_versions','id',d.mapVersionId)) throw new Error('Map route requires a valid map version.'); await requireEntity(env,d.characterId,'character','Route character'); if(d.bookId) await requireEntity(env,d.bookId,'book','Route book'); for(const markerId of d.markerIds||[]) if(!await rowExists(env,'map_markers','id',markerId)) throw new Error(`Route marker ${markerId} does not exist.`); }
     if(r.kind==='whiteboardNode'&&d.linkedEntityId) await requireEntity(env,d.linkedEntityId);
     if(r.kind==='whiteboardEdge'){ for(const nodeId of [d.fromNodeId,d.toNodeId]){ const node=await workspaceById(env,nodeId); if(!node||node.kind!=='whiteboardNode') throw new Error('Whiteboard edge requires valid whiteboard nodes.'); } }
-    if(r.kind==='manuscriptDocument'){ if(d.bookId) await requireEntity(env,d.bookId,'book','Manuscript book'); if(d.chapterId) await requireEntity(env,d.chapterId,'chapter','Manuscript chapter'); if(d.sceneId) await requireEntity(env,d.sceneId,'scene','Manuscript scene'); }
-    if(r.kind==='readerProfile'&&d.pointId) await requireEntity(env,d.pointId,['book','chapter','scene'],'Reader profile story point'); return;
+    if(r.kind==='manuscriptDocument'){ if(d.bookId) await requireEntity(env,d.bookId,'book','Manuscript book'); if(d.partId) await requireEntity(env,d.partId,'part','Manuscript part'); if(d.chapterId) await requireEntity(env,d.chapterId,'chapter','Manuscript chapter'); if(d.sceneId) await requireEntity(env,d.sceneId,'scene','Manuscript scene'); }
+    if(r.kind==='readerProfile'&&d.pointId) await requireEntity(env,d.pointId,STORY_POINT_TYPES,'Reader profile story point'); return;
   }
+}
+
+
+function normalizeForWrite(store,record,existing=null){
+  const stamp=now(),next=structuredClone(record||{});
+  if(store==='settings') return {...next,updatedAt:stamp};
+  next.createdAt=existing?.createdAt||next.createdAt||stamp;
+  next.updatedAt=stamp;
+  return next;
+}
+function concurrencyError(current){ return Object.assign(new Error('This record changed elsewhere. Reload before overwriting.'),{status:409,details:{currentUpdatedAt:current?.updatedAt||null}}); }
+function missingBaseVersionError(current){ return Object.assign(new Error('A base record version is required before modifying an existing record. Reload it and try again.'),{status:428,details:{currentUpdatedAt:current?.updatedAt||null}}); }
+function assertFresh(existing,baseUpdatedAt){
+  if(!existing) return;
+  if(!baseUpdatedAt) throw missingBaseVersionError(existing);
+  if(existing.updatedAt&&existing.updatedAt!==baseUpdatedAt) throw concurrencyError(existing);
+}
+async function mutateStoreRecord(env,store,record,{baseUpdatedAt=null,identity=null}={}){
+  const key=store==='settings'?record?.key:record?.id;
+  if(!key) throw new Error('Record key is required.');
+  const existing=await readRecord(env,store,key);
+  assertFresh(existing,baseUpdatedAt);
+  const normalized=normalizeForWrite(store,record,existing);
+  await validateRecord(env,store,normalized);
+  const revision=store==='entities'?revisionStatement(env,existing,identity):null;
+  const writes=[...(revision?[revision]:[]),upsertStatement(env,store,normalized),...referenceIndexStatements(env,store,normalized)];
+  await env.DB.batch(writes);
+  return normalized;
+}
+
+async function queryEntities(env,params){
+  const q=String(params.get('q')||'').trim().toLowerCase();
+  const type=String(params.get('type')||'').trim();
+  const status=String(params.get('status')||'').trim();
+  const archived=String(params.get('archived')||'active').trim();
+  const limit=Math.max(1,Math.min(100,Number(params.get('limit'))||50));
+  const offset=Math.max(0,Number(params.get('cursor'))||0);
+  const where=[],bind=[];
+  if(type){where.push('type=?');bind.push(type);}
+  if(status){where.push('status=?');bind.push(status);}
+  if(archived==='active') where.push('archived_at IS NULL');
+  else if(archived==='archived') where.push('archived_at IS NOT NULL');
+  if(q){ where.push(`(lower(name) LIKE ? OR lower(summary) LIKE ? OR lower(notes) LIKE ? OR lower(tags_json) LIKE ? OR lower(fields_json) LIKE ?)`); const like=`%${q}%`; bind.push(like,like,like,like,like); }
+  const clause=where.length?` WHERE ${where.join(' AND ')}`:'';
+  const count=await env.DB.prepare(`SELECT COUNT(*) AS n FROM entities${clause}`).bind(...bind).first();
+  const result=await env.DB.prepare(`SELECT * FROM entities${clause} ORDER BY favorite DESC, updated_at DESC, name COLLATE NOCASE ASC LIMIT ? OFFSET ?`).bind(...bind,limit,offset).all();
+  const records=(result.results||[]).map(row=>rowToRecord('entities',row));
+  const total=Number(count?.n)||0;
+  return {records,total,nextCursor:offset+records.length<total?String(offset+records.length):null};
+}
+
+function edgeKey(edge){ return [edge.sourceStore,edge.sourceId,edge.sourceField,edge.targetEntityId].join('\u001f'); }
+async function diagnostics(env,{deep=false}={}){
+  const started=Date.now();
+  const countStatements=[...DATA_STORES.map(store=>env.DB.prepare(`SELECT COUNT(*) AS n FROM ${TABLE[store]}${store==='workspace'?" WHERE kind<>'revision'":''}`)),env.DB.prepare('SELECT COUNT(*) AS n FROM reference_index'),env.DB.prepare("SELECT COUNT(*) AS n FROM workspace WHERE kind='revision'"),env.DB.prepare('PRAGMA integrity_check')];
+  const results=await env.DB.batch(countStatements);
+  const counts=Object.fromEntries(DATA_STORES.map((store,i)=>[store,Number(results[i]?.results?.[0]?.n)||0]));
+  const referenceIndexCount=Number(results[DATA_STORES.length]?.results?.[0]?.n)||0;
+  const revisionCount=Number(results[DATA_STORES.length+1]?.results?.[0]?.n)||0;
+  const integrity=(results[DATA_STORES.length+2]?.results||[]).map(row=>Object.values(row)[0]);
+  const orphanTargets=await env.DB.prepare('SELECT COUNT(*) AS n FROM reference_index r LEFT JOIN entities e ON e.id=r.target_entity_id WHERE e.id IS NULL').first();
+  const brokenNarrative=await env.DB.prepare(`SELECT COUNT(*) AS n FROM entities e WHERE (e.type='part' AND (e.parent_book_id IS NULL OR NOT EXISTS(SELECT 1 FROM entities b WHERE b.id=e.parent_book_id AND b.type='book'))) OR (e.type='chapter' AND ((e.parent_book_id IS NULL AND e.parent_part_id IS NULL) OR (e.parent_book_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM entities b WHERE b.id=e.parent_book_id AND b.type='book')) OR (e.parent_part_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM entities p WHERE p.id=e.parent_part_id AND p.type='part')))) OR (e.type='scene' AND (e.parent_chapter_id IS NULL OR NOT EXISTS(SELECT 1 FROM entities c WHERE c.id=e.parent_chapter_id AND c.type='chapter')))` ).first();
+  const out={ok:true,generatedAt:now(),counts,revisionCount,referenceIndex:{rows:referenceIndexCount,orphanTargets:Number(orphanTargets?.n)||0},narrative:{brokenPositions:Number(brokenNarrative?.n)||0},sqlite:{integrity},timings:{shallowMs:Date.now()-started}};
+  if(deep){
+    const deepStarted=Date.now(),data=await snapshot(env,{includeRevisions:false}),expected=buildReferenceIndex(data),actualRows=await env.DB.prepare('SELECT source_store,source_id,source_field,target_entity_id,source_entity_id,kind FROM reference_index').all();
+    const actual=(actualRows.results||[]).map(row=>({sourceStore:row.source_store,sourceId:row.source_id,sourceField:row.source_field,targetEntityId:row.target_entity_id,sourceEntityId:row.source_entity_id||null,kind:row.kind||'Structured reference'}));
+    const expectedSet=new Set(expected.map(edgeKey)),actualSet=new Set(actual.map(edgeKey));
+    out.referenceIndex.expectedRows=expected.length;
+    out.referenceIndex.missing=[...expectedSet].filter(key=>!actualSet.has(key)).length;
+    out.referenceIndex.stale=[...actualSet].filter(key=>!expectedSet.has(key)).length;
+    out.referenceIndex.inSync=out.referenceIndex.missing===0&&out.referenceIndex.stale===0;
+    out.timings.deepMs=Date.now()-deepStarted;
+    out.snapshotBytes=JSON.stringify(data).length;
+  }
+  return out;
 }
 
 function manifestForValidation(data){ return {...data,media:(data.media||[]).map(m=>({...m,archivePath:m.archivePath||`media/${m.id}`}))}; }
@@ -162,47 +239,69 @@ async function moveR2ToTrash(env,key){ if(!key) return null; try{ const obj=awai
 async function putMedia(request,env,id){
   const form=await request.formData(); const raw=form.get('metadata'),file=form.get('file'); if(typeof raw!=='string'||!(file instanceof File)) return error('Media upload requires metadata and file.',400);
   const meta=JSON.parse(raw); if(meta.id!==id) return error('Media id mismatch.',400); if(!Array.isArray(meta.tags)||!Array.isArray(meta.entityIds)) return error('Media metadata is invalid.',400); for(const ref of meta.entityIds) await requireEntity(env,ref);
-  const old=await env.DB.prepare('SELECT r2_key FROM media WHERE id=?').bind(id).first(); const key=mediaObjectKey(id,file.name||meta.name); await env.MEDIA.put(key,file.stream(),{httpMetadata:{contentType:file.type||meta.mime||'application/octet-stream'},customMetadata:{mediaId:id}});
-  const record={...meta,name:meta.name||file.name,title:meta.title||meta.name||file.name,mime:file.type||meta.mime||'application/octet-stream',size:file.size,r2Key:key,createdAt:meta.createdAt||now()};
-  try{ await env.DB.batch([upsertStatement(env,'media',record)]); }catch(e){ await env.MEDIA.delete(key).catch(()=>{}); throw e; }
-  if(old?.r2_key&&old.r2_key!==key) await moveR2ToTrash(env,old.r2_key); return json({ok:true,record:{...record,url:`/api/media/${encodeURIComponent(id)}/content`}});
+  const existing=await readRecord(env,'media',id); assertFresh(existing,request.headers.get('x-base-updated-at'));
+  const oldKey=existing?.r2Key||null,key=mediaObjectKey(id,file.name||meta.name); await env.MEDIA.put(key,file.stream(),{httpMetadata:{contentType:file.type||meta.mime||'application/octet-stream'},customMetadata:{mediaId:id}});
+  const record=normalizeForWrite('media',{...meta,name:meta.name||file.name,title:meta.title||meta.name||file.name,mime:file.type||meta.mime||'application/octet-stream',size:file.size,r2Key:key},existing);
+  try{ await env.DB.batch([upsertStatement(env,'media',record),...referenceIndexStatements(env,'media',record)]); }catch(e){ await env.MEDIA.delete(key).catch(()=>{}); throw e; }
+  if(oldKey&&oldKey!==key) await moveR2ToTrash(env,oldKey); return json({ok:true,record:{...record,url:`/api/media/${encodeURIComponent(id)}/content`}});
 }
 
-async function deleteMedia(env,id){
+async function deleteMedia(env,id,baseUpdatedAt=null){
+  const existing=await readRecord(env,'media',id); assertFresh(existing,baseUpdatedAt);
   const use=await env.DB.prepare('SELECT id FROM map_versions WHERE media_id=? LIMIT 1').bind(id).first(); if(use) throw new Error('This image is used by a map version. Delete that map version first.');
   const markerUse=await env.DB.prepare('SELECT id FROM map_markers WHERE custom_media_id=? LIMIT 1').bind(id).first(); if(markerUse) throw new Error('This image is used by a map marker. Remove that marker image first.');
   const layerRows=await env.DB.prepare("SELECT id,data_json FROM workspace WHERE kind='mapLayer'").all(); if((layerRows.results||[]).some(r=>safeJson(r.data_json,{}).mediaId===id)) throw new Error('This image is used by a map layer. Remove that layer first.');
   const portraitUse=await env.DB.prepare("SELECT id,name FROM entities WHERE type IN ('character','deity') AND json_extract(fields_json,'$.portraitMediaId')=? LIMIT 1").bind(id).first(); if(portraitUse) throw new Error(`This image is the portrait for ${portraitUse.name||'an entry'}. Remove it as the portrait first.`);
-  const row=await env.DB.prepare('SELECT r2_key FROM media WHERE id=?').bind(id).first(); if(!row) return; await env.DB.batch([env.DB.prepare('DELETE FROM media WHERE id=?').bind(id)]); await moveR2ToTrash(env,row.r2_key);
+  const row=await env.DB.prepare('SELECT r2_key FROM media WHERE id=?').bind(id).first(); if(!row) return; await env.DB.batch([env.DB.prepare('DELETE FROM media WHERE id=?').bind(id),env.DB.prepare("DELETE FROM reference_index WHERE source_store='media' AND source_id=?").bind(id)]); await moveR2ToTrash(env,row.r2_key);
 }
 
-async function deleteMapVersionCascade(env,id){
-  const version=await env.DB.prepare('SELECT * FROM map_versions WHERE id=?').bind(id).first(); if(!version) return; const media=await env.DB.prepare('SELECT * FROM media WHERE id=?').bind(version.media_id).first(); const other=await env.DB.prepare('SELECT id FROM map_versions WHERE id<>? AND media_id=? LIMIT 1').bind(id,version.media_id).first();
-  const entityIds=media?safeJson(media.entity_ids_json,[]):[],linkedElsewhere=entityIds.some(x=>x!==version.map_id); const workspaceRows=await env.DB.prepare('SELECT * FROM workspace').all(); const workspace=(workspaceRows.results||[]).map(r=>rowToRecord('workspace',r));
-  const deleteWorkspace=workspace.filter(w=>['mapLayer','mapRoute'].includes(w.kind)&&w.data?.mapVersionId===id);
-  const stmts=[env.DB.prepare('DELETE FROM map_markers WHERE map_version_id=?').bind(id),env.DB.prepare('DELETE FROM map_versions WHERE id=?').bind(id),...deleteWorkspace.map(w=>env.DB.prepare('DELETE FROM workspace WHERE id=?').bind(w.id))];
-  let deleteKey=null; if(media&&!other&&!linkedElsewhere){ stmts.push(env.DB.prepare('DELETE FROM media WHERE id=?').bind(version.media_id)); deleteKey=media.r2_key; }
-  await batchStatements(env,stmts); if(deleteKey) await moveR2ToTrash(env,deleteKey);
+async function deleteMapVersionCascade(env,id,baseUpdatedAt=null){
+  const current=await readRecord(env,'mapVersions',id); assertFresh(current,baseUpdatedAt);
+  const data=await snapshot(env,{includeRevisions:true}),plan=planMapVersionCascade(data,id,now()); if(!plan.version) return;
+  const stmts=[];
+  for(const markerId of plan.deletes.mapMarkers) stmts.push(env.DB.prepare('DELETE FROM map_markers WHERE id=?').bind(markerId));
+  for(const workspaceId of plan.deletes.workspace) stmts.push(env.DB.prepare('DELETE FROM workspace WHERE id=?').bind(workspaceId));
+  for(const marker of plan.updates.mapMarkers) stmts.push(upsertStatement(env,'mapMarkers',marker));
+  for(const item of plan.updates.workspace) stmts.push(upsertStatement(env,'workspace',item));
+  stmts.push(env.DB.prepare('DELETE FROM map_versions WHERE id=?').bind(id));
+  const mediaById=new Map((data.media||[]).map(item=>[item.id,item])),r2Deletes=[];
+  for(const mediaId of plan.deletes.media){ stmts.push(env.DB.prepare('DELETE FROM media WHERE id=?').bind(mediaId)); const media=mediaById.get(mediaId); if(media?.r2Key) r2Deletes.push(media.r2Key); }
+  await batchStatements(env,stmts); await rebuildReferenceIndex(env); for(const key of r2Deletes) await moveR2ToTrash(env,key);
 }
 
-function referencesEntityInWorkspace(item,id){ const d=item.data||{}; if(item.kind==='revision') return d.entityId===id; return [d.targetId,d.sceneId,d.linkedEntityId,d.entityId,d.characterId,d.bookId,d.chapterId,d.linkedEntityId,d.pointId].includes(id); }
-async function deleteEntityCascade(env,id){
-  const data=await snapshot(env,{includeRevisions:true}),target=data.entities.find(e=>e.id===id); if(!target) return;
-  const blocking=data.entities.filter(e=>!e.archivedAt&&e.id!==id&&(e.fields?.parentLocationId===id||e.fields?.parentBookId===id||e.fields?.parentChapterId===id)); if(blocking.length) throw new Error(`Cannot permanently delete this entry while ${blocking.length} active child ${blocking.length===1?'entry references':'entries reference'} it.`);
-  const changed=[]; for(const e of data.entities){ if(e.id===id) continue; const fields={...(e.fields||{})}; let dirty=false; for(const k of ['eraId','storyEntityId','scopeLocationId','parentMapId','locationId','parentLocationId','parentBookId','parentChapterId']) if(fields[k]===id){fields[k]='';dirty=true;} if(dirty) changed.push({...e,fields,updatedAt:now()}); }
-  const removedVersions=data.mapVersions.filter(v=>v.mapId===id),candidateMediaIds=new Set(removedVersions.map(v=>v.mediaId));
-  const stmts=[env.DB.prepare('DELETE FROM entities WHERE id=?').bind(id),env.DB.prepare('DELETE FROM relations WHERE from_id=? OR to_id=?').bind(id,id),env.DB.prepare('DELETE FROM clues WHERE mystery_id=? OR story_entity_id=?').bind(id,id),env.DB.prepare('DELETE FROM reveals WHERE mystery_id=? OR target_entity_id=? OR book_id=? OR chapter_id=? OR scene_id=?').bind(id,id,id,id,id),env.DB.prepare('DELETE FROM knowledge WHERE subject_entity_id=? OR knower_entity_id=? OR story_entity_id=?').bind(id,id,id),env.DB.prepare('DELETE FROM map_markers WHERE location_id=?').bind(id),env.DB.prepare('DELETE FROM map_versions WHERE map_id=?').bind(id)];
-  for(const v of removedVersions) stmts.push(env.DB.prepare('DELETE FROM map_markers WHERE map_version_id=?').bind(v.id)); for(const e of changed) stmts.push(upsertStatement(env,'entities',e));
-  for(const w of data.workspace.filter(w=>referencesEntityInWorkspace(w,id))) stmts.push(env.DB.prepare('DELETE FROM workspace WHERE id=?').bind(w.id));
-  const r2Deletes=[]; for(const m of data.media){ const ids=(m.entityIds||[]).filter(x=>x!==id),referencedByOtherVersion=data.mapVersions.some(v=>v.mapId!==id&&v.mediaId===m.id); if(candidateMediaIds.has(m.id)&&!referencedByOtherVersion&&!ids.length){stmts.push(env.DB.prepare('DELETE FROM media WHERE id=?').bind(m.id));if(m.r2Key)r2Deletes.push(m.r2Key);} else if((m.entityIds||[]).includes(id)) stmts.push(env.DB.prepare('UPDATE media SET entity_ids_json=? WHERE id=?').bind(JSON.stringify(ids),m.id)); }
-  const project=data.settings.find(s=>s.key==='project'); if(project){ let dirty=false; const value=structuredClone(project.value||{}); if(value.currentBookId===id){value.currentBookId=null;dirty=true;} if(value.storyCompass?.protagonistIds?.includes(id)){value.storyCompass.protagonistIds=value.storyCompass.protagonistIds.filter(x=>x!==id);dirty=true;} if(dirty) stmts.push(upsertStatement(env,'settings',{...project,value})); }
-  await batchStatements(env,stmts); for(const key of r2Deletes) await moveR2ToTrash(env,key);
+async function deleteEntityCascade(env,id,baseUpdatedAt=null){
+  const current=await readRecord(env,'entities',id); assertFresh(current,baseUpdatedAt);
+  const data=await snapshot(env,{includeRevisions:true}),plan=planEntityCascade(data,id,now()); if(!plan.target) return;
+  if(plan.blocking.length) throw new Error(`Cannot permanently delete this entry while ${plan.blocking.length} active child ${plan.blocking.length===1?'entry references':'entries reference'} it.`);
+  const stmts=[],r2Deletes=[],mediaById=new Map((data.media||[]).map(item=>[item.id,item]));
+  const deletes=[['relations','relations'],['clues','clues'],['reveals','reveals'],['knowledge','knowledge'],['mapVersions','map_versions'],['mapMarkers','map_markers'],['workspace','workspace'],['media','media']];
+  for(const [key,table] of deletes) for(const recordId of plan.deletes[key]) stmts.push(env.DB.prepare(`DELETE FROM ${table} WHERE id=?`).bind(recordId));
+  for(const mediaId of plan.deletes.media){ const media=mediaById.get(mediaId); if(media?.r2Key) r2Deletes.push(media.r2Key); }
+  const updates=[['entities','entities'],['relations','relations'],['clues','clues'],['mapMarkers','mapMarkers'],['workspace','workspace'],['media','media'],['settings','settings']];
+  for(const [key,store] of updates) for(const record of plan.updates[key]) stmts.push(upsertStatement(env,store,record));
+  stmts.push(env.DB.prepare('DELETE FROM entities WHERE id=?').bind(id));
+  await batchStatements(env,stmts); await rebuildReferenceIndex(env); for(const key of r2Deletes) await moveR2ToTrash(env,key);
 }
 
 async function deleteMapMarker(env,id){
   const workspace=await readStore(env,'workspace'); const stmts=[env.DB.prepare('DELETE FROM map_markers WHERE id=?').bind(id)];
   for(const route of workspace.filter(w=>w.kind==='mapRoute'&&(w.data?.markerIds||[]).includes(id))){ stmts.push(upsertStatement(env,'workspace',{...route,data:{...route.data,markerIds:route.data.markerIds.filter(x=>x!==id)},updatedAt:now()})); }
-  await batchStatements(env,stmts);
+  await batchStatements(env,stmts); await rebuildReferenceIndex(env);
+}
+
+async function deleteWorkspaceCascade(env,id){
+  const [workspace,mapMarkers]=await Promise.all([readStore(env,'workspace',{includeRevisions:true}),readStore(env,'mapMarkers')]);
+  const plan=planWorkspaceDelete(workspace,mapMarkers,id,now()); if(!plan.target) return;
+  const stmts=[];
+  for(const workspaceId of plan.deletes) stmts.push(env.DB.prepare('DELETE FROM workspace WHERE id=?').bind(workspaceId));
+  for(const marker of plan.markerUpdates) stmts.push(upsertStatement(env,'mapMarkers',marker));
+  await batchStatements(env,stmts); await rebuildReferenceIndex(env);
+}
+
+async function deleteClueOrReveal(env,store,id){
+  const workspace=await readStore(env,'workspace'),updates=cleanupPlotBeatLinks(workspace,store==='clues'?{clueId:id}:{revealId:id},now());
+  const stmts=[env.DB.prepare(`DELETE FROM ${TABLE[store]} WHERE id=?`).bind(id),...updates.map(item=>upsertStatement(env,'workspace',item))];
+  await batchStatements(env,stmts); await rebuildReferenceIndex(env);
 }
 
 async function prepareRestore(request,env){ const raw=await request.json(),migrated=migrateBackupData(raw); assertValidBackupSnapshot(manifestForValidation(migrated)); const restoreId=crypto.randomUUID(),manifest={...migrated,media:(migrated.media||[]).map(({blob,dataUrl,url,r2Key,...m})=>m)}; await env.MEDIA.put(`_restore/${restoreId}/manifest.json`,JSON.stringify(manifest),{httpMetadata:{contentType:'application/json'}}); return json({ok:true,restoreId,mediaIds:manifest.media.map(m=>m.id)}); }
@@ -210,8 +309,11 @@ async function uploadRestoreMedia(request,env,restoreId,mediaId){ const manifest
 export async function replaceStructuredSnapshot(env,manifest,finalized){
   const stmts=[];
   for(const store of DATA_STORES) stmts.push(env.DB.prepare(`DELETE FROM ${TABLE[store]}`));
+  stmts.push(env.DB.prepare('DELETE FROM reference_index'));
+  const restored={...manifest,media:finalized};
   for(const store of DATA_STORES){ const records=store==='media'?finalized:(manifest[store]||[]); for(const record of records) stmts.push(upsertStatement(env,store,record)); }
-  // One D1 batch is one transaction. Do not chunk destructive restore writes across independent batches.
+  for(const edge of buildReferenceIndex(restored)) stmts.push(env.DB.prepare(`INSERT INTO reference_index (source_store,source_id,source_field,target_entity_id,source_entity_id,kind) VALUES (?,?,?,?,?,?)`).bind(edge.sourceStore,edge.sourceId,edge.sourceField,edge.targetEntityId,edge.sourceEntityId||null,edge.kind||'Structured reference'));
+  // Canonical restore and its derived reverse index commit together in one D1 transaction.
   await env.DB.batch(stmts);
 }
 
@@ -228,33 +330,62 @@ function revisionStatement(env,existing,identity){ if(!existing) return null; co
 export async function handleApi(request,env,identity){
   const url=new URL(request.url),path=url.pathname,method=request.method.toUpperCase();
   if(path==='/api/health'&&method==='GET'){
-    try{ const table=await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entities'").first(); if(!table) return json({ok:false,ready:false,error:'D1 migrations have not been applied.'},503); const counts=await env.DB.batch([env.DB.prepare('SELECT COUNT(*) AS n FROM entities'),env.DB.prepare('SELECT COUNT(*) AS n FROM media'),env.DB.prepare('SELECT COUNT(*) AS n FROM workspace')]); return json({ok:true,ready:true,app:'UnWritten',version:'3.2.0',storage:'Cloudflare D1 + private R2',entities:Number(counts[0]?.results?.[0]?.n||0),media:Number(counts[1]?.results?.[0]?.n||0),workspace:Number(counts[2]?.results?.[0]?.n||0),accessEmail:identity.email,role:identity.role}); }catch(e){ return error(`Storage is not ready: ${e.message}`,503); }
+    try{
+      const table=await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entities'").first();
+      if(!table) return json({ok:false,ready:false,error:'D1 migrations have not been applied.'},503);
+      const counts=await env.DB.batch([env.DB.prepare('SELECT COUNT(*) AS n FROM entities'),env.DB.prepare('SELECT COUNT(*) AS n FROM media'),env.DB.prepare("SELECT COUNT(*) AS n FROM workspace WHERE kind<>'revision'")]);
+      return json({ok:true,ready:true,app:'UnWritten',version:APP_VERSION,storage:'Cloudflare D1 + private R2',entities:Number(counts[0]?.results?.[0]?.n||0),media:Number(counts[1]?.results?.[0]?.n||0),workspace:Number(counts[2]?.results?.[0]?.n||0),accessEmail:identity.email,role:identity.role});
+    }catch(e){ return error(`Storage is not ready: ${e.message}`,503); }
   }
+
+  // Snapshot remains a backup/diagnostic primitive. Normal runtime reads use store/query routes.
   if(path==='/api/snapshot'&&method==='GET') return json({ok:true,...await snapshot(env)});
+  if(path==='/api/entities/query'&&method==='GET') return json({ok:true,...await queryEntities(env,url.searchParams)});
+  if(path==='/api/diagnostics'&&method==='GET') return json(await diagnostics(env,{deep:url.searchParams.get('deep')==='1'}));
   const revisionRoute=path.match(/^\/api\/entities\/([^/]+)\/revisions$/); if(revisionRoute&&method==='GET') return json({ok:true,revisions:await readEntityRevisions(env,decodeURIComponent(revisionRoute[1]),url.searchParams.get('limit')||50)});
+  const impactRoute=path.match(/^\/api\/entities\/([^/]+)\/impact$/); if(impactRoute&&method==='GET') return json({ok:true,references:await entityImpact(env,decodeURIComponent(impactRoute[1]))});
   if(path==='/api/revisions'&&method==='GET') return json({ok:true,revisions:await readAllRevisions(env)});
+
+  const storeCollection=path.match(/^\/api\/store\/([^/]+)$/);
+  if(storeCollection&&method==='GET'){
+    const store=decodeURIComponent(storeCollection[1]);
+    if(!DATA_STORES.includes(store)) return error('Unsupported store.',404);
+    return json({ok:true,records:await readStore(env,store,{includeRevisions:false})});
+  }
+  const storeRoute=path.match(/^\/api\/store\/([^/]+)\/([^/]+)$/);
+  if(storeRoute&&method==='GET'){
+    const store=decodeURIComponent(storeRoute[1]),key=decodeURIComponent(storeRoute[2]);
+    if(!DATA_STORES.includes(store)) return error('Unsupported store.',404);
+    const record=await readRecord(env,store,key);
+    return record?json({ok:true,record}):error('Record not found.',404);
+  }
+
   if(method!=='GET'&&method!=='HEAD') requireOwner(identity);
+  if(path==='/api/diagnostics/reference-index/rebuild'&&method==='POST'){
+    const started=Date.now(),rebuilt=await rebuildReferenceIndex(env); return json({ok:true,rebuildMs:Date.now()-started,rebuiltEdges:rebuilt.edges,...await diagnostics(env,{deep:true})});
+  }
   if(path==='/api/restore/prepare'&&method==='POST') return prepareRestore(request,env);
   const restoreMedia=path.match(/^\/api\/restore\/([^/]+)\/media\/([^/]+)$/); if(restoreMedia&&method==='PUT') return uploadRestoreMedia(request,env,decodeURIComponent(restoreMedia[1]),decodeURIComponent(restoreMedia[2]));
   const restoreCommit=path.match(/^\/api\/restore\/([^/]+)\/commit$/); if(restoreCommit&&method==='POST') return commitRestore(env,decodeURIComponent(restoreCommit[1]));
   const mediaContent=path.match(/^\/api\/media\/([^/]+)\/content$/); if(mediaContent&&method==='GET'){ const id=decodeURIComponent(mediaContent[1]),row=await env.DB.prepare('SELECT * FROM media WHERE id=?').bind(id).first(); if(!row) return error('Media not found.',404); const obj=await env.MEDIA.get(row.r2_key); if(!obj) return error('Media object is missing from R2.',404); const headers=new Headers(); obj.writeHttpMetadata(headers); headers.set('content-type',row.mime||headers.get('content-type')||'application/octet-stream'); headers.set('cache-control','private, max-age=3600'); headers.set('etag',obj.httpEtag); return new Response(obj.body,{headers}); }
-  const mediaRoute=path.match(/^\/api\/media\/([^/]+)$/); if(mediaRoute){ const id=decodeURIComponent(mediaRoute[1]); if(method==='PUT') return putMedia(request,env,id); if(method==='DELETE'){await deleteMedia(env,id);return json({ok:true});} }
-  const entityCascade=path.match(/^\/api\/entities\/([^/]+)\/cascade$/); if(entityCascade&&method==='DELETE'){await deleteEntityCascade(env,decodeURIComponent(entityCascade[1]));return json({ok:true});}
-  const mapCascade=path.match(/^\/api\/map-versions\/([^/]+)\/cascade$/); if(mapCascade&&method==='DELETE'){await deleteMapVersionCascade(env,decodeURIComponent(mapCascade[1]));return json({ok:true});}
-  const storeRoute=path.match(/^\/api\/store\/([^/]+)\/([^/]+)$/); if(storeRoute){
+  const mediaRoute=path.match(/^\/api\/media\/([^/]+)$/); if(mediaRoute){ const id=decodeURIComponent(mediaRoute[1]); if(method==='PUT') return putMedia(request,env,id); if(method==='DELETE'){await deleteMedia(env,id,request.headers.get('x-base-updated-at'));return json({ok:true});} }
+  const entityCascade=path.match(/^\/api\/entities\/([^/]+)\/cascade$/); if(entityCascade&&method==='DELETE'){await deleteEntityCascade(env,decodeURIComponent(entityCascade[1]),request.headers.get('x-base-updated-at'));return json({ok:true});}
+  const mapCascade=path.match(/^\/api\/map-versions\/([^/]+)\/cascade$/); if(mapCascade&&method==='DELETE'){await deleteMapVersionCascade(env,decodeURIComponent(mapCascade[1]),request.headers.get('x-base-updated-at'));return json({ok:true});}
+
+  if(storeRoute){
     const store=decodeURIComponent(storeRoute[1]),key=decodeURIComponent(storeRoute[2]); if(!DATA_STORES.includes(store)||store==='media') return error('Unsupported store.',404);
     if(method==='PUT'){
-      const record=await request.json(),expected=store==='settings'?record.key:record.id; if(expected!==key) return error('Record key mismatch.',400); await validateRecord(env,store,record);
-      if(store==='entities'){
-        const existing=await oneEntity(env,key),base=request.headers.get('x-base-updated-at'); if(existing&&base&&existing.updatedAt!==base) return error('This entry changed elsewhere. Reload before overwriting.',409,{currentUpdatedAt:existing.updatedAt});
-        const revision=revisionStatement(env,existing,identity); await env.DB.batch(revision?[revision,upsertStatement(env,store,record)]:[upsertStatement(env,store,record)]); return json({ok:true});
-      }
-      await env.DB.batch([upsertStatement(env,store,record)]); return json({ok:true});
+      const record=await request.json(),expected=store==='settings'?record.key:record.id; if(expected!==key) return error('Record key mismatch.',400);
+      const saved=await mutateStoreRecord(env,store,record,{baseUpdatedAt:request.headers.get('x-base-updated-at'),identity});
+      return json({ok:true,record:saved});
     }
     if(method==='DELETE'){
       if(['entities','mapVersions'].includes(store)) return error('This record type requires its dedicated cascade deletion route.',409);
+      const existing=await readRecord(env,store,key); assertFresh(existing,request.headers.get('x-base-updated-at'));
       if(store==='mapMarkers'){await deleteMapMarker(env,key);return json({ok:true});}
-      const keyCol=store==='settings'?'key':'id'; await env.DB.batch([env.DB.prepare(`DELETE FROM ${TABLE[store]} WHERE ${keyCol}=?`).bind(key)]); return json({ok:true});
+      if(store==='workspace'){await deleteWorkspaceCascade(env,key);return json({ok:true});}
+      if(['clues','reveals'].includes(store)){await deleteClueOrReveal(env,store,key);return json({ok:true});}
+      const keyCol=store==='settings'?'key':'id'; await env.DB.batch([env.DB.prepare(`DELETE FROM ${TABLE[store]} WHERE ${keyCol}=?`).bind(key),env.DB.prepare('DELETE FROM reference_index WHERE source_store=? AND source_id=?').bind(store,key)]); return json({ok:true});
     }
   }
   return error('API route not found.',404);
@@ -263,6 +394,6 @@ export async function handleApi(request,env,identity){
 export default {
   async fetch(request,env){
     try{ const url=new URL(request.url); if(!url.pathname.startsWith('/api/')) return new Response('Not found',{status:404}); const identity=await authenticate(request,env); return await handleApi(request,env,identity); }
-    catch(e){ console.error(e); return error(e?.message||'Unexpected server error.',e?.status||500); }
+    catch(e){ console.error(e); return error(e?.message||'Unexpected server error.',e?.status||500,e?.details); }
   }
 };

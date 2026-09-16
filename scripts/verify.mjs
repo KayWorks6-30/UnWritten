@@ -24,7 +24,7 @@ for(const file of sourceFiles){
 const html=await readFile(join(root,'index.html'),'utf8');
 
 const sw=await readFile(join(root,'sw.js'),'utf8');
-if(!/const CACHE = ['"]unwritten-v3\.2\.0['"]/.test(sw)) errors.push('Service worker cache name must identify V3.2.0.');
+if(!/const CACHE = ['"]unwritten-v3\.5\.1['"]/.test(sw)) errors.push('Service worker cache name must identify V3.5.1.');
 const shell=new Set([...sw.matchAll(/['"](\.\/js\/[^'"]+\.js)['"]/g)].map(m=>m[1]));
 async function importGraph(entry,seen=new Set()){
   const absolute=resolve(root,entry); if(seen.has(absolute)) return seen; seen.add(absolute);
@@ -65,8 +65,13 @@ try{
   if(cfg.workers_dev!==false||cfg.preview_urls!==false) errors.push('Alternate Worker endpoints must remain disabled for the private production app.');
 }catch(error){errors.push(`wrangler.jsonc is invalid JSON: ${error.message}`);}
 
-const migrations=(await Promise.all(['0001_initial.sql','0002_v3_workspace.sql'].map(name=>readFile(join(root,'migrations',name),'utf8')))).join('\n');
-for(const table of ['entities','relations','settings','media','clues','reveals','knowledge','map_versions','map_markers','workspace']) if(!new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`).test(migrations)) errors.push(`D1 migrations are missing ${table}.`);
+const migrations=(await Promise.all(['0001_initial.sql','0002_v3_workspace.sql','0003_v34_architecture_hardening.sql','0004_v35_architecture_stabilization.sql'].map(name=>readFile(join(root,'migrations',name),'utf8')))).join('\n');
+for(const table of ['entities','relations','settings','media','clues','reveals','knowledge','map_versions','map_markers','workspace','reference_index']) if(!new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`).test(migrations)) errors.push(`D1 migrations are missing ${table}.`);
+if(!/CREATE VIEW narrative_positions\b/.test(migrations)) errors.push('D1 migrations are missing the narrative_positions view.');
+if(!/ALTER TABLE relations ADD COLUMN status\b/.test(migrations)) errors.push('D1 migrations are missing relationship status hardening.');
+if(!/ALTER TABLE reveals ADD COLUMN part_id\b/.test(migrations)) errors.push('D1 migrations are missing Reveal Part support.');
+if(!/ALTER TABLE settings ADD COLUMN updated_at\b/.test(migrations)) errors.push('D1 migrations are missing generalized concurrency timestamps.');
+if(!/trg_relations_refs_insert/.test(migrations)||!/trg_knowledge_refs_insert/.test(migrations)) errors.push('D1 migrations are missing structural reference safety triggers.');
 
 try{
   const pkg=JSON.parse(await readFile(join(root,'package.json'),'utf8'));
